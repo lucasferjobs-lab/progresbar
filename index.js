@@ -40,17 +40,28 @@ app.use(express.urlencoded({ extended: true }));
 
 // Security headers for admin iframe embedding in Tiendanube
 app.use((req, res, next) => {
-  const allowed = [
+  const frameAncestorsAllowed = [
     'https://*.mitiendanube.com',
     'https://admin.tiendanube.com',
     'https://*.nuvemshop.com.br',
     'https://*.lojavirtualnuvem.com.br',
   ].join(' ');
 
-  res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${allowed}`);
+  // Some hosting layers may inject X-Frame-Options=SAMEORIGIN/DENY.
+  // We remove it and rely on CSP frame-ancestors for modern browsers.
+  res.removeHeader('X-Frame-Options');
+
+  const isAdminPage = req.path === '/admin' || req.path.startsWith('/admin/');
+  if (isAdminPage) {
+    res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${frameAncestorsAllowed}; default-src 'self' 'unsafe-inline' https: data: blob:; connect-src 'self' https:; img-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:;`);
+  } else {
+    res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${frameAncestorsAllowed}`);
+  }
+
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
 });
 
