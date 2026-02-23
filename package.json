@@ -1,0 +1,23 @@
+﻿{
+    "name":  "progressbar",
+    "version":  "1.0.0",
+    "description":  "",
+    "main":  "index.js",
+    "scripts":  {
+                    "start":  "node index.js",
+                    "init-db":  "node init-db.js",
+                    "test":  "echo \"Error: no test specified\" \u0026\u0026 exit 1"
+                },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "type":  "commonjs",
+    "dependencies":  {
+                         "axios":  "^1.13.5",
+                         "dotenv":  "^17.3.1",
+                         "express":  "^5.2.1",
+                         "pg":  "^8.18.0"
+                     }
+}
