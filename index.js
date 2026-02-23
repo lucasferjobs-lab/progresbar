@@ -79,13 +79,9 @@ app.get('/barra.js', (_req, res) => res.sendFile(path.join(__dirname, 'barra.js'
 app.get('/styles.css', (_req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
 app.get('/estilos.css', (_req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
 
-app.get('/', (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: 'progressbar-tn',
-    now: new Date().toISOString(),
-    app_base_url: APP_BASE_URL || null,
-  });
+app.get('/', (req, res) => {
+  const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+  return res.redirect(302, `/admin${query}`);
 });
 
 app.get('/health', (_req, res) => {
@@ -267,24 +263,11 @@ app.get('/instalacion', async (req, res) => {
 app.get('/admin', async (req, res) => {
   const storeId = String(req.query.store_id || req.query.store || '');
   const safeStoreId = storeId.replace(/[^0-9]/g, '');
-
-  let config = {
+  const defaultConfig = {
     monto_envio_gratis: 50000,
     monto_cuotas: 80000,
     monto_regalo: 100000,
   };
-
-  if (safeStoreId) {
-    const result = await pool.query(
-      `SELECT store_id, monto_envio_gratis, monto_cuotas, monto_regalo
-       FROM tiendas
-       WHERE store_id = $1`,
-      [safeStoreId]
-    );
-    if (result.rows[0]) {
-      config = result.rows[0];
-    }
-  }
 
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -374,17 +357,17 @@ app.get('/admin', async (req, res) => {
 
         <div>
           <label for="envio">Monto para envío gratis</label>
-          <input id="envio" type="number" min="0" name="envio" value="${Number(config.monto_envio_gratis || 50000)}" required />
+          <input id="envio" type="number" min="0" name="envio" value="${Number(defaultConfig.monto_envio_gratis)}" required />
         </div>
 
         <div>
           <label for="cuotas">Monto para cuotas sin interés</label>
-          <input id="cuotas" type="number" min="0" name="cuotas" value="${Number(config.monto_cuotas || 80000)}" required />
+          <input id="cuotas" type="number" min="0" name="cuotas" value="${Number(defaultConfig.monto_cuotas)}" required />
         </div>
 
         <div>
           <label for="regalo">Monto para regalo</label>
-          <input id="regalo" type="number" min="0" name="regalo" value="${Number(config.monto_regalo || 100000)}" required />
+          <input id="regalo" type="number" min="0" name="regalo" value="${Number(defaultConfig.monto_regalo)}" required />
         </div>
 
         <button type="submit">Guardar configuración</button>
@@ -394,6 +377,9 @@ app.get('/admin', async (req, res) => {
       <p class="error" id="nexoError" style="display:none;"></p>
     </main>
 
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+    <script>window.react = window.React;</script>
+    <script src="https://unpkg.com/@tiendanube/nexo@1.3.0/dist/index.js" crossorigin="anonymous"></script>
     <script>
       (async function initNexo() {
         const ACTION_CONNECTED = 'app/connected';
@@ -404,6 +390,9 @@ app.get('/admin', async (req, res) => {
         const nexoError = document.getElementById('nexoError');
         const storeIdInput = document.getElementById('storeId');
         const storeIdLabel = document.getElementById('storeLabel');
+        const envioInput = document.getElementById('envio');
+        const cuotasInput = document.getElementById('cuotas');
+        const regaloInput = document.getElementById('regalo');
         const initialStoreId = '${safeStoreId}';
 
         function dispatch(type, payload) {
@@ -444,34 +433,59 @@ app.get('/admin', async (req, res) => {
             return;
           }
 
-          // Fire handshake repeatedly for a short window to avoid race conditions.
-          dispatchHandshake();
-          let attempts = 0;
-          const retryTimer = setInterval(function () {
-            attempts += 1;
+          const nexoLib = window['@tiendanube/nexo'];
+          if (nexoLib && typeof nexoLib.create === 'function') {
+            const nexo = nexoLib.create({ clientId: ${JSON.stringify(CLIENT_ID)}, log: false });
+            await nexoLib.connect(nexo, 5000);
+            nexoLib.iAmReady(nexo);
+
+            try {
+              const storeInfo = await nexoLib.getStoreInfo(nexo);
+              if (storeInfo && storeInfo.id) {
+                const detectedStoreId = String(storeInfo.id);
+                storeIdInput.value = detectedStoreId;
+                storeIdLabel.textContent = detectedStoreId;
+              }
+            } catch (_) {}
+          } else {
+            // Fallback: manual postMessage handshake if SDK is unavailable.
             dispatchHandshake();
-            if (attempts >= 20) clearInterval(retryTimer);
-          }, 250);
-          setTimeout(function () { clearInterval(retryTimer); }, 5000);
+            let attempts = 0;
+            const retryTimer = setInterval(function () {
+              attempts += 1;
+              dispatchHandshake();
+              if (attempts >= 20) clearInterval(retryTimer);
+            }, 250);
+            setTimeout(function () { clearInterval(retryTimer); }, 5000);
+            waitFor(ACTION_CONNECTED, 5000).catch(function () {});
 
-          window.addEventListener('load', dispatchHandshake);
-          document.addEventListener('visibilitychange', function () {
-            if (!document.hidden) dispatchHandshake();
-          });
-          waitFor(ACTION_CONNECTED, 5000).catch(function () {});
+            try {
+              const storeInfo = await (function () {
+                const info = waitFor(ACTION_STORE_INFO, 3000);
+                dispatch(ACTION_STORE_INFO);
+                return info;
+              })();
+              if (storeInfo && storeInfo.id) {
+                const detectedStoreId = String(storeInfo.id);
+                storeIdInput.value = detectedStoreId;
+                storeIdLabel.textContent = detectedStoreId;
+              }
+            } catch (_) {}
+          }
 
-          try {
-            const storeInfo = await (function () {
-              const info = waitFor(ACTION_STORE_INFO, 3000);
-              dispatch(ACTION_STORE_INFO);
-              return info;
-            })();
-            if (storeInfo && storeInfo.id) {
-              const detectedStoreId = String(storeInfo.id);
-              storeIdInput.value = detectedStoreId;
-              storeIdLabel.textContent = detectedStoreId;
-            }
-          } catch (_) { }
+          // Fetch persisted config asynchronously so admin page is never blocked by DB latency.
+          const resolvedStoreId = storeIdInput.value || initialStoreId;
+          if (resolvedStoreId) {
+            try {
+              const cfgRes = await fetch('/api/config/' + encodeURIComponent(resolvedStoreId), { cache: 'no-store' });
+              if (cfgRes.ok) {
+                const cfg = await cfgRes.json();
+                if (cfg && cfg.monto_envio_gratis != null) envioInput.value = Number(cfg.monto_envio_gratis);
+                if (cfg && cfg.monto_cuotas != null) cuotasInput.value = Number(cfg.monto_cuotas);
+                if (cfg && cfg.monto_regalo != null) regaloInput.value = Number(cfg.monto_regalo);
+              }
+            } catch (_) {}
+          }
         } catch (err) {
           if (!initialStoreId) {
             console.error('[nexo] init error', err);
