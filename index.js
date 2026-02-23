@@ -31,6 +31,7 @@ const ADMIN_ALLOWED_ORIGINS = [
 
 const oauthStateStore = new Map();
 const evaluateGoalsCache = new Map();
+let goalSettingsTableReady = false;
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.warn('[WARN] Missing TIENDANUBE_CLIENT_ID or TIENDANUBE_CLIENT_SECRET in environment.');
@@ -142,6 +143,27 @@ function parseQueryParams(raw, storeId) {
 
 function apiStoreUrl(storeId, resourcePath) {
   return `${API_BASE}/${API_VERSION}/${storeId}/${resourcePath}`;
+}
+
+async function ensureGoalSettingsTable() {
+  if (goalSettingsTableReady) return;
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS store_goal_settings (
+      id SERIAL PRIMARY KEY,
+      store_id VARCHAR(255) NOT NULL UNIQUE REFERENCES tiendas(store_id) ON DELETE CASCADE,
+      cuotas_threshold_amount DECIMAL DEFAULT 0,
+      cuotas_category_id VARCHAR(255),
+      cuotas_product_id VARCHAR(255),
+      regalo_min_amount DECIMAL DEFAULT 0,
+      regalo_primary_product_id VARCHAR(255),
+      regalo_secondary_product_id VARCHAR(255),
+      regalo_gift_product_id VARCHAR(255),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  goalSettingsTableReady = true;
 }
 
 async function getStoreAccessToken(storeId) {
@@ -289,6 +311,7 @@ async function fetchProductCategories(storeId, accessToken, productId) {
 }
 
 async function evaluateAdvancedGoals(storeId, payload) {
+  await ensureGoalSettingsTable();
   const norm = normalizeCartPayload(payload);
   const settingsResult = await pool.query(
     `SELECT s.*, t.access_token
@@ -550,6 +573,38 @@ app.get('/admin', async (req, res) => {
         display: grid;
         gap: 12px;
       }
+      .settings-shell {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+        background: #f9fcff;
+      }
+      .tabs {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .tab-btn {
+        margin: 0;
+        width: auto;
+        height: 34px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid #cbd9ea;
+        background: #fff;
+        color: #28415e;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .tab-btn.active {
+        border-color: #8bb8ff;
+        background: #eaf3ff;
+        color: #0b4dba;
+      }
+      .tab-panel { display: none; }
+      .tab-panel.active { display: grid; gap: 12px; }
       .goal {
         border: 1px solid var(--line);
         border-radius: 12px;
@@ -667,59 +722,69 @@ app.get('/admin', async (req, res) => {
 
       <form action="/admin/save" method="POST" class="grid">
         <input type="hidden" name="store_id" id="storeId" value="${safeStoreId}" />
+        <section class="settings-shell">
+          <div class="tabs">
+            <button type="button" class="tab-btn active" data-tab-target="tab-general">Configuracion General</button>
+            <button type="button" class="tab-btn" data-tab-target="tab-cuotas">Cuotas</button>
+            <button type="button" class="tab-btn" data-tab-target="tab-regalo">Regalo</button>
+          </div>
 
-        <div class="goal">
-          <p class="goal-title"><span class="ico ico-envio">E</span> Envio Gratis</p>
-          <p class="goal-note">Activa un incentivo inmediato de compra.</p>
-          <input id="envio" type="number" min="0" name="envio" value="${Number(defaultConfig.monto_envio_gratis)}" required />
-        </div>
+          <div id="tab-general" class="tab-panel active">
+            <div class="goal">
+              <p class="goal-title"><span class="ico ico-envio">E</span> Envio Gratis</p>
+              <p class="goal-note">Activa un incentivo inmediato de compra.</p>
+              <input id="envio" type="number" min="0" name="envio" value="${Number(defaultConfig.monto_envio_gratis)}" required />
+            </div>
 
-        <div class="goal">
-          <p class="goal-title"><span class="ico ico-cuotas">C</span> Cuotas Sin Interes</p>
-          <p class="goal-note">Empuja productos de mayor valor por financiamiento.</p>
-          <input id="cuotas" type="number" min="0" name="cuotas" value="${Number(defaultConfig.monto_cuotas)}" required />
-        </div>
+            <div class="goal">
+              <p class="goal-title"><span class="ico ico-cuotas">C</span> Cuotas Sin Interes</p>
+              <p class="goal-note">Empuja productos de mayor valor por financiamiento.</p>
+              <input id="cuotas" type="number" min="0" name="cuotas" value="${Number(defaultConfig.monto_cuotas)}" required />
+            </div>
 
-        <div class="goal">
-          <p class="goal-title"><span class="ico ico-regalo">R</span> Regalo Sorpresa</p>
-          <p class="goal-note">Ultimo gatillo para elevar el subtotal final.</p>
-          <input id="regalo" type="number" min="0" name="regalo" value="${Number(defaultConfig.monto_regalo)}" required />
-        </div>
+            <div class="goal">
+              <p class="goal-title"><span class="ico ico-regalo">R</span> Regalo Sorpresa</p>
+              <p class="goal-note">Ultimo gatillo para elevar el subtotal final.</p>
+              <input id="regalo" type="number" min="0" name="regalo" value="${Number(defaultConfig.monto_regalo)}" required />
+            </div>
+          </div>
 
-        <div class="goal">
-          <p class="goal-title"><span class="ico ico-cuotas">C</span> Regla Avanzada de Cuotas</p>
-          <p class="goal-note">Configura categoria o producto objetivo para cuotas.</p>
-          <input id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" placeholder="Monto objetivo para cuotas (ej: 50000)" />
-          <input id="cuotas_category_id" type="text" name="cuotas_category_id" placeholder="ID categoria (ej: 123456)" />
-          <input id="cuotas_product_id" type="text" name="cuotas_product_id" placeholder="ID producto (opcional, prioriza sobre categoria)" />
-        </div>
+          <div id="tab-cuotas" class="tab-panel">
+            <div class="goal">
+              <p class="goal-title"><span class="ico ico-cuotas">C</span> Regla Avanzada de Cuotas</p>
+              <p class="goal-note">Configura categoria o producto objetivo para cuotas.</p>
+              <input id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" placeholder="Monto objetivo para cuotas (ej: 50000)" />
+              <input id="filter_cuotas_category" type="text" placeholder="Filtrar categorias..." />
+              <select id="cuotas_category_id" name="cuotas_category_id">
+                <option value="">Categoria objetivo (opcional)</option>
+              </select>
+              <input id="filter_cuotas_product" type="text" placeholder="Filtrar productos..." />
+              <select id="cuotas_product_id" name="cuotas_product_id">
+                <option value="">Producto objetivo (opcional, prioriza sobre categoria)</option>
+              </select>
+            </div>
+          </div>
 
-        <div class="goal">
-          <p class="goal-title"><span class="ico ico-regalo">R</span> Regla Avanzada de Regalo Combo</p>
-          <p class="goal-note">Ejemplo: remera azul + pantalon azul + monto minimo para entregar regalo.</p>
-          <input id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" placeholder="Monto minimo carrito para regalo" />
-          <input id="regalo_primary_product_id" type="text" name="regalo_primary_product_id" placeholder="ID producto principal (ej: remera azul)" />
-          <input id="regalo_secondary_product_id" type="text" name="regalo_secondary_product_id" placeholder="ID producto secundario (ej: pantalon azul)" />
-          <input id="regalo_gift_product_id" type="text" name="regalo_gift_product_id" placeholder="ID producto regalo" />
-        </div>
-
-        <div class="goal">
-          <p class="goal-title"><span class="ico ico-cuotas">ID</span> Buscador de IDs</p>
-          <p class="goal-note">Busca productos/categorias por nombre y selecciona su ID.</p>
-          <select id="search_product_target">
-            <option value="cuotas_product_id">Destino producto: Cuotas</option>
-            <option value="regalo_primary_product_id">Destino producto: Regalo principal</option>
-            <option value="regalo_secondary_product_id">Destino producto: Regalo secundario</option>
-            <option value="regalo_gift_product_id">Destino producto: Producto regalo</option>
-          </select>
-          <input id="search_product_q" type="text" placeholder="Buscar producto (ej: pantalon azul)" />
-          <div id="search_product_results" class="goal-note"></div>
-          <select id="search_category_target">
-            <option value="cuotas_category_id">Destino categoria: Cuotas</option>
-          </select>
-          <input id="search_category_q" type="text" placeholder="Buscar categoria (ej: pantalon)" />
-          <div id="search_category_results" class="goal-note"></div>
-        </div>
+          <div id="tab-regalo" class="tab-panel">
+            <div class="goal">
+              <p class="goal-title"><span class="ico ico-regalo">R</span> Regla Avanzada de Regalo Combo</p>
+              <p class="goal-note">Ejemplo: remera azul + pantalon azul + monto minimo para entregar regalo.</p>
+              <input id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" placeholder="Monto minimo carrito para regalo" />
+              <input id="filter_regalo_primary" type="text" placeholder="Filtrar producto principal..." />
+              <select id="regalo_primary_product_id" name="regalo_primary_product_id">
+                <option value="">Producto principal (ej: remera azul)</option>
+              </select>
+              <input id="filter_regalo_secondary" type="text" placeholder="Filtrar producto secundario..." />
+              <select id="regalo_secondary_product_id" name="regalo_secondary_product_id">
+                <option value="">Producto secundario (ej: pantalon azul)</option>
+              </select>
+              <input id="filter_regalo_gift" type="text" placeholder="Filtrar producto regalo..." />
+              <select id="regalo_gift_product_id" name="regalo_gift_product_id">
+                <option value="">Producto regalo</option>
+              </select>
+            </div>
+          </div>
+        </section>
 
         <button type="submit">Guardar configuración</button>
       </form>
@@ -752,17 +817,22 @@ app.get('/admin', async (req, res) => {
         const cuotasThresholdAmountInput = document.getElementById('cuotas_threshold_amount');
         const cuotasCategoryIdInput = document.getElementById('cuotas_category_id');
         const cuotasProductIdInput = document.getElementById('cuotas_product_id');
+        const filterCuotasCategoryInput = document.getElementById('filter_cuotas_category');
+        const filterCuotasProductInput = document.getElementById('filter_cuotas_product');
         const regaloMinAmountInput = document.getElementById('regalo_min_amount');
         const regaloPrimaryProductIdInput = document.getElementById('regalo_primary_product_id');
         const regaloSecondaryProductIdInput = document.getElementById('regalo_secondary_product_id');
         const regaloGiftProductIdInput = document.getElementById('regalo_gift_product_id');
-        const searchProductQInput = document.getElementById('search_product_q');
-        const searchProductResults = document.getElementById('search_product_results');
-        const searchProductTargetInput = document.getElementById('search_product_target');
-        const searchCategoryQInput = document.getElementById('search_category_q');
-        const searchCategoryResults = document.getElementById('search_category_results');
-        const searchCategoryTargetInput = document.getElementById('search_category_target');
+        const filterRegaloPrimaryInput = document.getElementById('filter_regalo_primary');
+        const filterRegaloSecondaryInput = document.getElementById('filter_regalo_secondary');
+        const filterRegaloGiftInput = document.getElementById('filter_regalo_gift');
+        const tabButtons = Array.prototype.slice.call(document.querySelectorAll('.tab-btn'));
+        const tabPanels = Array.prototype.slice.call(document.querySelectorAll('.tab-panel'));
         const initialStoreId = '${safeStoreId}';
+        const selectData = {
+          products: [],
+          categories: [],
+        };
 
         function dispatch(type, payload) {
           if (window.parent && window.parent !== window) {
@@ -797,73 +867,97 @@ app.get('/admin', async (req, res) => {
           });
         }
 
-        function debounce(fn, delay) {
-          let t = null;
-          return function () {
-            const args = arguments;
-            clearTimeout(t);
-            t = setTimeout(function () { fn.apply(null, args); }, delay);
-          };
-        }
-
-        async function copyToClipboard(text) {
-          try {
-            await navigator.clipboard.writeText(String(text));
-          } catch (_) {}
-        }
-
-        function renderSearchResults(container, items, onPick) {
-          container.innerHTML = '';
-          if (!Array.isArray(items) || !items.length) {
-            container.textContent = 'Sin resultados';
-            return;
-          }
-          items.forEach(function (item) {
-            const row = document.createElement('div');
-            row.className = 'search-item';
-            row.innerHTML = '<span>' + String(item.name || 'Sin nombre') + ' <strong>#' + String(item.id) + '</strong></span><div class=\"search-actions\"><button type=\"button\" class=\"btn-use\">Usar</button><button type=\"button\" class=\"btn-copy\">Copiar</button></div>';
-            row.querySelector('.btn-use').addEventListener('click', function () {
-              onPick(item);
+        function initTabs() {
+          if (!tabButtons.length || !tabPanels.length) return;
+          tabButtons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              const target = btn.getAttribute('data-tab-target');
+              tabButtons.forEach(function (b) { b.classList.remove('active'); });
+              tabPanels.forEach(function (p) { p.classList.remove('active'); });
+              btn.classList.add('active');
+              const panel = document.getElementById(target);
+              if (panel) panel.classList.add('active');
             });
-            row.querySelector('.btn-copy').addEventListener('click', function () {
-              copyToClipboard(item.id);
-            });
-            container.appendChild(row);
           });
         }
 
-        async function searchProducts(storeId, q) {
-          if (!storeId || !q) {
-            searchProductResults.textContent = '';
-            return;
+        function fillSelect(selectEl, items, placeholder) {
+          const current = String(selectEl.value || '');
+          selectEl.innerHTML = '';
+          const first = document.createElement('option');
+          first.value = '';
+          first.textContent = placeholder;
+          selectEl.appendChild(first);
+
+          (items || []).forEach(function (item) {
+            const opt = document.createElement('option');
+            opt.value = String(item.id);
+            opt.textContent = String(item.name || 'Sin nombre') + ' (#' + String(item.id) + ')';
+            selectEl.appendChild(opt);
+          });
+
+          if (current) {
+            selectEl.value = current;
           }
-          const r = await fetch('/api/admin/products/' + encodeURIComponent(storeId) + '/search?q=' + encodeURIComponent(q), { cache: 'no-store' });
-          if (!r.ok) return;
-          const data = await r.json();
-          renderSearchResults(searchProductResults, data.items || [], function (item) {
-            const target = String(searchProductTargetInput.value || 'cuotas_product_id');
-            if (target === 'cuotas_product_id') cuotasProductIdInput.value = String(item.id);
-            else if (target === 'regalo_primary_product_id') regaloPrimaryProductIdInput.value = String(item.id);
-            else if (target === 'regalo_secondary_product_id') regaloSecondaryProductIdInput.value = String(item.id);
-            else if (target === 'regalo_gift_product_id') regaloGiftProductIdInput.value = String(item.id);
+        }
+
+        function filterItems(items, query) {
+          const q = String(query || '').trim().toLowerCase();
+          if (!q) return items.slice();
+          return items.filter(function (item) {
+            const label = String(item.name || '').toLowerCase();
+            const id = String(item.id || '').toLowerCase();
+            return label.includes(q) || id.includes(q);
           });
         }
 
-        async function searchCategories(storeId, q) {
-          if (!storeId || !q) {
-            searchCategoryResults.textContent = '';
-            return;
-          }
-          const r = await fetch('/api/admin/categories/' + encodeURIComponent(storeId) + '/search?q=' + encodeURIComponent(q), { cache: 'no-store' });
-          if (!r.ok) return;
+        function refreshProductSelects() {
+          fillSelect(
+            cuotasProductIdInput,
+            filterItems(selectData.products, filterCuotasProductInput.value),
+            'Producto objetivo (opcional, prioriza sobre categoria)'
+          );
+          fillSelect(
+            regaloPrimaryProductIdInput,
+            filterItems(selectData.products, filterRegaloPrimaryInput.value),
+            'Producto principal (ej: remera azul)'
+          );
+          fillSelect(
+            regaloSecondaryProductIdInput,
+            filterItems(selectData.products, filterRegaloSecondaryInput.value),
+            'Producto secundario (ej: pantalon azul)'
+          );
+          fillSelect(
+            regaloGiftProductIdInput,
+            filterItems(selectData.products, filterRegaloGiftInput.value),
+            'Producto regalo'
+          );
+        }
+
+        function refreshCategorySelects() {
+          fillSelect(
+            cuotasCategoryIdInput,
+            filterItems(selectData.categories, filterCuotasCategoryInput.value),
+            'Categoria objetivo (opcional)'
+          );
+        }
+
+        async function loadAllProducts(storeId) {
+          const r = await fetch('/api/admin/products/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+          if (!r.ok) return [];
           const data = await r.json();
-          renderSearchResults(searchCategoryResults, data.items || [], function (item) {
-            const target = String(searchCategoryTargetInput.value || 'cuotas_category_id');
-            if (target === 'cuotas_category_id') cuotasCategoryIdInput.value = String(item.id);
-          });
+          return Array.isArray(data.items) ? data.items : [];
+        }
+
+        async function loadAllCategories(storeId) {
+          const r = await fetch('/api/admin/categories/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+          if (!r.ok) return [];
+          const data = await r.json();
+          return Array.isArray(data.items) ? data.items : [];
         }
 
         try {
+          initTabs();
           if (!window.parent || window.parent === window) {
             return;
           }
@@ -928,19 +1022,22 @@ app.get('/admin', async (req, res) => {
               }
             } catch (_) {}
 
-            const debouncedProductSearch = debounce(function (value) {
-              searchProducts(resolvedStoreId, value).catch(function () {});
-            }, 300);
-            const debouncedCategorySearch = debounce(function (value) {
-              searchCategories(resolvedStoreId, value).catch(function () {});
-            }, 300);
+            try {
+              const [products, categories] = await Promise.all([
+                loadAllProducts(resolvedStoreId),
+                loadAllCategories(resolvedStoreId),
+              ]);
+              selectData.products = products;
+              selectData.categories = categories;
+              refreshProductSelects();
+              refreshCategorySelects();
 
-            searchProductQInput.addEventListener('input', function () {
-              debouncedProductSearch(searchProductQInput.value.trim());
-            });
-            searchCategoryQInput.addEventListener('input', function () {
-              debouncedCategorySearch(searchCategoryQInput.value.trim());
-            });
+              filterCuotasProductInput.addEventListener('input', refreshProductSelects);
+              filterRegaloPrimaryInput.addEventListener('input', refreshProductSelects);
+              filterRegaloSecondaryInput.addEventListener('input', refreshProductSelects);
+              filterRegaloGiftInput.addEventListener('input', refreshProductSelects);
+              filterCuotasCategoryInput.addEventListener('input', refreshCategorySelects);
+            } catch (_) {}
           }
         } catch (err) {
           if (!initialStoreId) {
@@ -974,6 +1071,8 @@ app.post('/admin/save', async (req, res) => {
   }
 
   try {
+    await ensureGoalSettingsTable();
+
     await pool.query(
       `UPDATE tiendas SET monto_envio_gratis = $1, monto_cuotas = $2, monto_regalo = $3 WHERE store_id = $4`,
       [envio, cuotas, regalo, storeId]
@@ -1016,6 +1115,7 @@ app.post('/admin/save', async (req, res) => {
 
     return res.redirect(302, `/admin?store_id=${storeId}`);
   } catch (error) {
+    console.error('[admin/save] failed:', error.message);
     return res.status(500).send('Save failed');
   }
 });
@@ -1025,6 +1125,8 @@ app.get('/api/config/:storeId', async (req, res) => {
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
 
   try {
+    await ensureGoalSettingsTable();
+
     const result = await pool.query(
       `SELECT t.store_id,
               t.monto_envio_gratis,
@@ -1062,11 +1164,8 @@ app.post('/api/goals/:storeId/evaluate', async (req, res) => {
   }
 });
 
-app.get('/api/admin/products/:storeId/search', async (req, res) => {
+app.get('/api/admin/products/:storeId/all', async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
-  const q = String(req.query.q || '').trim().toLowerCase();
-  const page = Math.max(1, Number(req.query.page || 1));
-  const perPage = Math.min(50, Math.max(1, Number(req.query.per_page || 30)));
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
 
   try {
@@ -1079,27 +1178,28 @@ app.get('/api/admin/products/:storeId/search', async (req, res) => {
       'Content-Type': 'application/json',
     };
 
-    const url = `${apiStoreUrl(storeId, 'products')}?fields=id,name&page=${page}&per_page=${perPage}`;
-    const resp = await axios.get(url, { headers, timeout: 8000 });
-    const raw = parseCollection(resp.data, ['products', 'items', 'data']);
+    const pageSize = 200;
+    const maxPages = 20;
+    const all = [];
 
-    const items = raw
-      .map((p) => ({ id: String(p.id), name: pickLocalizedName(p.name) }))
-      .filter((p) => (q ? p.name.toLowerCase().includes(q) : true))
-      .slice(0, 20);
+    for (let page = 1; page <= maxPages; page += 1) {
+      const url = `${apiStoreUrl(storeId, 'products')}?fields=id,name&page=${page}&per_page=${pageSize}`;
+      const resp = await axios.get(url, { headers, timeout: 8000 });
+      const raw = parseCollection(resp.data, ['products', 'items', 'data']);
+      const list = raw.map((p) => ({ id: String(p.id), name: pickLocalizedName(p.name) }));
+      all.push(...list);
+      if (list.length < pageSize) break;
+    }
 
-    return res.status(200).json({ items, page, per_page: perPage });
+    return res.status(200).json({ items: all });
   } catch (error) {
     const detail = error.response?.data || error.message;
-    return res.status(500).json({ error: 'Search products failed', detail });
+    return res.status(500).json({ error: 'Load products failed', detail });
   }
 });
 
-app.get('/api/admin/categories/:storeId/search', async (req, res) => {
+app.get('/api/admin/categories/:storeId/all', async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
-  const q = String(req.query.q || '').trim().toLowerCase();
-  const page = Math.max(1, Number(req.query.page || 1));
-  const perPage = Math.min(200, Math.max(1, Number(req.query.per_page || 100)));
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
 
   try {
@@ -1112,19 +1212,23 @@ app.get('/api/admin/categories/:storeId/search', async (req, res) => {
       'Content-Type': 'application/json',
     };
 
-    const url = `${apiStoreUrl(storeId, 'categories')}?fields=id,name&page=${page}&per_page=${perPage}`;
-    const resp = await axios.get(url, { headers, timeout: 8000 });
-    const raw = parseCollection(resp.data, ['categories', 'items', 'data']);
+    const pageSize = 200;
+    const maxPages = 20;
+    const all = [];
 
-    const items = raw
-      .map((c) => ({ id: String(c.id), name: pickLocalizedName(c.name) }))
-      .filter((c) => (q ? c.name.toLowerCase().includes(q) : true))
-      .slice(0, 20);
+    for (let page = 1; page <= maxPages; page += 1) {
+      const url = `${apiStoreUrl(storeId, 'categories')}?fields=id,name&page=${page}&per_page=${pageSize}`;
+      const resp = await axios.get(url, { headers, timeout: 8000 });
+      const raw = parseCollection(resp.data, ['categories', 'items', 'data']);
+      const list = raw.map((c) => ({ id: String(c.id), name: pickLocalizedName(c.name) }));
+      all.push(...list);
+      if (list.length < pageSize) break;
+    }
 
-    return res.status(200).json({ items, page, per_page: perPage });
+    return res.status(200).json({ items: all });
   } catch (error) {
     const detail = error.response?.data || error.message;
-    return res.status(500).json({ error: 'Search categories failed', detail });
+    return res.status(500).json({ error: 'Load categories failed', detail });
   }
 });
 
