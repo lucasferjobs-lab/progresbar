@@ -38,7 +38,7 @@ if (!APP_BASE_URL) {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Security headers for admin iframe embedding in Tiendanube
+// --- INICIO DEL FIX DE SEGURIDAD PARA EL IFRAME ---
 app.use((req, res, next) => {
   const frameAncestorsAllowed = [
     'https://*.mitiendanube.com',
@@ -47,21 +47,29 @@ app.use((req, res, next) => {
     'https://*.lojavirtualnuvem.com.br',
   ].join(' ');
 
-  // Some hosting layers may inject X-Frame-Options=SAMEORIGIN/DENY.
-  // We remove it and rely on CSP frame-ancestors for modern browsers.
+  // 1. Permitimos explícitamente el iframe de Tiendanube
+  res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${frameAncestorsAllowed};`);
+
+  // 2. Removemos restricciones de servidores antiguos
   res.removeHeader('X-Frame-Options');
 
-  const isAdminPage = req.path === '/admin' || req.path.startsWith('/admin/');
-  if (isAdminPage) {
-    res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${frameAncestorsAllowed}; default-src 'self' 'unsafe-inline' https: data: blob:; connect-src 'self' https:; img-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:;`);
-  } else {
-    res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${frameAncestorsAllowed}`);
-  }
-
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // 3. FIX CRÍTICO: Evitamos el error "strict-origin-when-cross-origin"
+  res.setHeader('Referrer-Policy', 'no-referrer-when-downgrade');
+  
+  // 4. Mantenemos tus otras configuraciones de seguridad
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  
+  next();
+});
+// --- FIN DEL FIX DE SEGURIDAD ---
+
+// CORS for storefront script config fetches from merchant domains.
+app.use('/api/config', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
@@ -156,7 +164,7 @@ async function ensureStoreScript(storeId, accessToken) {
       query_params: parseQueryParams(SCRIPT_QUERY_PARAMS, storeId),
     };
     try {
-      await axios.post(endpoint, body, { headers });
+      await axios.post(endpoint, body, { headers, timeout: 8000 });
       return { linked: true };
     } catch (error) {
       const status = error.response?.status;
@@ -176,7 +184,7 @@ async function ensureStoreScript(storeId, accessToken) {
       where: 'store',
     };
 
-    await axios.post(endpoint, body, { headers });
+    await axios.post(endpoint, body, { headers, timeout: 8000 });
     return { linked: true };
   }
 
@@ -211,30 +219,50 @@ app.get('/instalacion', async (req, res) => {
 
     await upsertStore(userId, accessToken);
 
-    try {
-      const scriptResult = await ensureStoreScript(userId, accessToken);
-      if (scriptResult.reason === 'auto_installed') {
-        console.log(`[install] script ${SCRIPT_ID} is auto-installed; skipped manual association for store ${userId}`);
-      } else if (scriptResult.linked) {
-        console.log(`[install] script linked for store ${userId}`);
-      }
-    } catch (scriptErr) {
-      const detail = scriptErr.response?.data || scriptErr.message;
-      console.warn(`[install] script link failed for store ${userId}:`, detail);
-    }
+    // Do not block installation redirect on script linking.
+    // This avoids admin hangs when partner API is slow/intermittent.
+    ensureStoreScript(userId, accessToken)
+      .then((scriptResult) => {
+        if (scriptResult.reason === 'auto_installed') {
+          console.log(`[install] script ${SCRIPT_ID} is auto-installed; skipped manual association for store ${userId}`);
+        } else if (scriptResult.linked) {
+          console.log(`[install] script linked for store ${userId}`);
+        }
+      })
+      .catch((scriptErr) => {
+        const detail = scriptErr.response?.data || scriptErr.message;
+        console.warn(`[install] script link failed for store ${userId}:`, detail);
+      });
 
     const adminUrl = `https://admin.tiendanube.com/apps/${CLIENT_ID}/admin?store_id=${userId}`;
     // Top-level redirect to admin after install callback
-    return res.send(`<html><script>window.top.location.href = "${adminUrl}";</script></html>`);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    return res.send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <title>Redirigiendo...</title>
+  </head>
+  <body>
+    <script>
+      try {
+        window.top.location.replace(${JSON.stringify(adminUrl)});
+      } catch (_) {
+        window.location.replace(${JSON.stringify(adminUrl)});
+      }
+    </script>
+    <noscript><a href="${adminUrl}">Continuar</a></noscript>
+  </body>
+</html>`);
   } catch (error) {
     const detail = error.response?.data || error.message;
     console.error('[install] failed:', detail);
     return res.status(500).send('Installation failed. Check server logs.');
   }
 });
-
-// El resto de tu ruta /admin y /admin/save se mantienen IGUAL...
-// Solo asegúrate de copiar la lógica de los headers arriba.
 
 app.get('/admin', async (req, res) => {
   const storeId = String(req.query.store_id || req.query.store || '');
@@ -258,6 +286,9 @@ app.get('/admin', async (req, res) => {
     }
   }
 
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   return res.status(200).send(`<!DOCTYPE html>
 <html lang="es">
   <head>
@@ -383,6 +414,11 @@ app.get('/admin', async (req, res) => {
           }
         }
 
+        function dispatchHandshake() {
+          dispatch(ACTION_CONNECTED);
+          dispatch(ACTION_READY);
+        }
+
         function waitFor(type, timeoutMs) {
           return new Promise(function (resolve, reject) {
             const timeoutId = setTimeout(function () {
@@ -408,8 +444,20 @@ app.get('/admin', async (req, res) => {
             return;
           }
 
-          dispatch(ACTION_CONNECTED);
-          dispatch(ACTION_READY);
+          // Fire handshake repeatedly for a short window to avoid race conditions.
+          dispatchHandshake();
+          let attempts = 0;
+          const retryTimer = setInterval(function () {
+            attempts += 1;
+            dispatchHandshake();
+            if (attempts >= 20) clearInterval(retryTimer);
+          }, 250);
+          setTimeout(function () { clearInterval(retryTimer); }, 5000);
+
+          window.addEventListener('load', dispatchHandshake);
+          document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) dispatchHandshake();
+          });
           waitFor(ACTION_CONNECTED, 5000).catch(function () {});
 
           try {
