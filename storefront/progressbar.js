@@ -292,7 +292,7 @@
     text.innerHTML = result.message;
   }
 
-  function buildCartSnapshot(cart) {
+  function buildCartSnapshot(cart, forcedTotalAmount) {
     const c = cart || (window.LS && window.LS.cart) || {};
     const productList = Array.isArray(c.products) ? c.products : (Array.isArray(c.items) ? c.items : []);
 
@@ -317,7 +317,10 @@
       };
     }).filter((i) => i.product_id);
 
-    const totalAmount = toAmount(c.total) || getSubtotalAmount() || items.reduce((acc, i) => acc + Number(i.line_total || 0), 0);
+    const totalAmount = (forcedTotalAmount != null ? Number(forcedTotalAmount) : null)
+      || getSubtotalAmount()
+      || toAmount(c.total)
+      || items.reduce((acc, i) => acc + Number(i.line_total || 0), 0);
     return {
       total_amount: Number(totalAmount || 0),
       items,
@@ -333,18 +336,23 @@
       items: cartSnapshot.items.map((i) => [i.product_id, i.quantity, i.line_total]),
     });
 
-    if (state.lastSignature === signature && now - state.lastEvalAt < 15000) return;
+    if (state.lastSignature === signature && now - state.lastEvalAt < 1200) return;
 
     state.lastSignature = signature;
     state.lastEvalAt = now;
     const seq = ++state.evalSeq;
 
+    let timer = null;
     try {
+      const controller = new AbortController();
+      timer = setTimeout(function () { controller.abort(); }, 1800);
       const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cartSnapshot),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       if (!res.ok) return;
       const data = await res.json();
       if (seq !== state.evalSeq) return;
@@ -352,6 +360,8 @@
       render(cartSnapshot.total_amount);
     } catch (_) {
       // Keep default rendering if evaluation endpoint is unavailable.
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -371,7 +381,7 @@
       if (amount != null) {
         render(amount);
         if (shouldEvaluate !== false) {
-          scheduleEvaluate(buildCartSnapshot());
+          scheduleEvaluate(buildCartSnapshot(null, amount));
         }
       }
     });
