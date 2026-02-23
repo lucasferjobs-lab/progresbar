@@ -43,6 +43,12 @@ const schemaQueries = [
   `CREATE TABLE IF NOT EXISTS store_goal_settings (
       id SERIAL PRIMARY KEY,
       store_id VARCHAR(255) NOT NULL UNIQUE REFERENCES tiendas(store_id) ON DELETE CASCADE,
+      enable_envio_rule BOOLEAN DEFAULT TRUE,
+      enable_cuotas_rule BOOLEAN DEFAULT TRUE,
+      enable_regalo_rule BOOLEAN DEFAULT TRUE,
+      envio_min_amount DECIMAL DEFAULT 0,
+      envio_category_id VARCHAR(255),
+      envio_product_id VARCHAR(255),
       cuotas_threshold_amount DECIMAL DEFAULT 0,
       cuotas_category_id VARCHAR(255),
       cuotas_product_id VARCHAR(255),

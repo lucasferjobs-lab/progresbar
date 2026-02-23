@@ -152,6 +152,12 @@ async function ensureGoalSettingsTable() {
     CREATE TABLE IF NOT EXISTS store_goal_settings (
       id SERIAL PRIMARY KEY,
       store_id VARCHAR(255) NOT NULL UNIQUE REFERENCES tiendas(store_id) ON DELETE CASCADE,
+      enable_envio_rule BOOLEAN DEFAULT TRUE,
+      enable_cuotas_rule BOOLEAN DEFAULT TRUE,
+      enable_regalo_rule BOOLEAN DEFAULT TRUE,
+      envio_min_amount DECIMAL DEFAULT 0,
+      envio_category_id VARCHAR(255),
+      envio_product_id VARCHAR(255),
       cuotas_threshold_amount DECIMAL DEFAULT 0,
       cuotas_category_id VARCHAR(255),
       cuotas_product_id VARCHAR(255),
@@ -162,6 +168,13 @@ async function ensureGoalSettingsTable() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS enable_envio_rule BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS enable_cuotas_rule BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS enable_regalo_rule BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_min_amount DECIMAL DEFAULT 0;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_category_id VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_product_id VARCHAR(255);`);
 
   goalSettingsTableReady = true;
 }
@@ -327,13 +340,67 @@ async function evaluateAdvancedGoals(storeId, payload) {
   }
 
   const accessToken = settings.access_token;
-  const out = { cuotas: null, regalo: null, cart_total: norm.total_amount };
+  const out = { envio: null, cuotas: null, regalo: null, cart_total: norm.total_amount };
 
+  const envioEnabled = settings.enable_envio_rule !== false;
+  const envioThreshold = toNumberOrNull(settings.envio_min_amount) || 0;
+  const envioCategoryId = String(settings.envio_category_id || '').trim();
+  const envioProductId = String(settings.envio_product_id || '').trim();
+
+  if (envioEnabled && envioThreshold > 0) {
+    let eligibleSubtotal = 0;
+    let hasMatch = !envioCategoryId && !envioProductId;
+
+    for (const item of norm.items) {
+      let matches = false;
+      if (!envioCategoryId && !envioProductId) {
+        matches = true;
+      }
+      if (!matches && envioProductId && item.product_id === envioProductId) {
+        matches = true;
+      }
+
+      if (!matches && envioCategoryId) {
+        const localCats = item.categories || [];
+        if (localCats.includes(envioCategoryId)) {
+          matches = true;
+        } else if (accessToken) {
+          try {
+            const remoteCats = await fetchProductCategories(storeId, accessToken, item.product_id);
+            if (remoteCats.includes(envioCategoryId)) {
+              matches = true;
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (matches) {
+        hasMatch = true;
+        eligibleSubtotal += toNumberOrNull(item.line_total) || 0;
+      }
+    }
+
+    const missing = Math.max(0, envioThreshold - eligibleSubtotal);
+    out.envio = {
+      has_match: hasMatch,
+      threshold_amount: envioThreshold,
+      eligible_subtotal: eligibleSubtotal,
+      missing_amount: missing,
+      reached: hasMatch && missing <= 0,
+      target: {
+        category_id: envioCategoryId || null,
+        product_id: envioProductId || null,
+      },
+      progress: envioThreshold > 0 ? Math.max(0, Math.min(1, eligibleSubtotal / envioThreshold)) : 0,
+    };
+  }
+
+  const cuotasEnabled = settings.enable_cuotas_rule !== false;
   const cuotasThreshold = toNumberOrNull(settings.cuotas_threshold_amount) || 0;
   const cuotasCategoryId = String(settings.cuotas_category_id || '').trim();
   const cuotasProductId = String(settings.cuotas_product_id || '').trim();
 
-  if (cuotasThreshold > 0 && (cuotasCategoryId || cuotasProductId)) {
+  if (cuotasEnabled && cuotasThreshold > 0 && (cuotasCategoryId || cuotasProductId)) {
     let eligibleSubtotal = 0;
     let hasMatch = false;
 
@@ -378,12 +445,13 @@ async function evaluateAdvancedGoals(storeId, payload) {
     };
   }
 
+  const regaloEnabled = settings.enable_regalo_rule !== false;
   const regaloMin = toNumberOrNull(settings.regalo_min_amount) || 0;
   const regaloPrimary = String(settings.regalo_primary_product_id || '').trim();
   const regaloSecondary = String(settings.regalo_secondary_product_id || '').trim();
   const regaloGift = String(settings.regalo_gift_product_id || '').trim();
 
-  if (regaloMin > 0 && regaloPrimary && regaloSecondary) {
+  if (regaloEnabled && regaloMin > 0 && regaloPrimary && regaloSecondary) {
     const hasPrimary = norm.items.some((i) => i.product_id === regaloPrimary);
     const hasSecondary = norm.items.some((i) => i.product_id === regaloSecondary);
     const comboMatched = hasPrimary && hasSecondary;
@@ -733,7 +801,15 @@ app.get('/admin', async (req, res) => {
             <div class="goal">
               <p class="goal-title"><span class="ico ico-envio">E</span> Envio Gratis</p>
               <p class="goal-note">Activa un incentivo inmediato de compra.</p>
-              <input id="envio" type="number" min="0" name="envio" value="${Number(defaultConfig.monto_envio_gratis)}" required />
+              <label><input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" checked /> Activar regla de envio</label>
+              <input id="envio" type="number" min="0" name="envio" value="${Number(defaultConfig.monto_envio_gratis)}" />
+              <input id="envio_min_amount" type="number" min="0" name="envio_min_amount" placeholder="Monto objetivo de envio para target" />
+              <select id="envio_category_id" name="envio_category_id">
+                <option value="">Categoria objetivo (opcional)</option>
+              </select>
+              <select id="envio_product_id" name="envio_product_id">
+                <option value="">Producto objetivo (opcional, prioriza sobre categoria)</option>
+              </select>
             </div>
 
             <div class="goal">
@@ -753,6 +829,7 @@ app.get('/admin', async (req, res) => {
             <div class="goal">
               <p class="goal-title"><span class="ico ico-cuotas">C</span> Regla Avanzada de Cuotas</p>
               <p class="goal-note">Configura categoria o producto objetivo para cuotas.</p>
+              <label><input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" checked /> Activar regla de cuotas</label>
               <input id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" placeholder="Monto objetivo para cuotas (ej: 50000)" />
               <input id="filter_cuotas_category" type="text" placeholder="Filtrar categorias..." />
               <select id="cuotas_category_id" name="cuotas_category_id">
@@ -769,6 +846,7 @@ app.get('/admin', async (req, res) => {
             <div class="goal">
               <p class="goal-title"><span class="ico ico-regalo">R</span> Regla Avanzada de Regalo Combo</p>
               <p class="goal-note">Ejemplo: remera azul + pantalon azul + monto minimo para entregar regalo.</p>
+              <label><input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" checked /> Activar regla de regalo</label>
               <input id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" placeholder="Monto minimo carrito para regalo" />
               <input id="filter_regalo_primary" type="text" placeholder="Filtrar producto principal..." />
               <select id="regalo_primary_product_id" name="regalo_primary_product_id">
@@ -812,8 +890,14 @@ app.get('/admin', async (req, res) => {
         const storeIdInput = document.getElementById('storeId');
         const storeIdLabel = document.getElementById('storeLabel');
         const envioInput = document.getElementById('envio');
+        const enableEnvioRuleInput = document.getElementById('enable_envio_rule');
+        const envioMinAmountInput = document.getElementById('envio_min_amount');
+        const envioCategoryIdInput = document.getElementById('envio_category_id');
+        const envioProductIdInput = document.getElementById('envio_product_id');
         const cuotasInput = document.getElementById('cuotas');
+        const enableCuotasRuleInput = document.getElementById('enable_cuotas_rule');
         const regaloInput = document.getElementById('regalo');
+        const enableRegaloRuleInput = document.getElementById('enable_regalo_rule');
         const cuotasThresholdAmountInput = document.getElementById('cuotas_threshold_amount');
         const cuotasCategoryIdInput = document.getElementById('cuotas_category_id');
         const cuotasProductIdInput = document.getElementById('cuotas_product_id');
@@ -833,6 +917,7 @@ app.get('/admin', async (req, res) => {
           products: [],
           categories: [],
         };
+        const preselected = {};
 
         function dispatch(type, payload) {
           if (window.parent && window.parent !== window) {
@@ -913,6 +998,11 @@ app.get('/admin', async (req, res) => {
 
         function refreshProductSelects() {
           fillSelect(
+            envioProductIdInput,
+            filterItems(selectData.products, filterCuotasProductInput.value),
+            'Producto objetivo (opcional, prioriza sobre categoria)'
+          );
+          fillSelect(
             cuotasProductIdInput,
             filterItems(selectData.products, filterCuotasProductInput.value),
             'Producto objetivo (opcional, prioriza sobre categoria)'
@@ -935,6 +1025,11 @@ app.get('/admin', async (req, res) => {
         }
 
         function refreshCategorySelects() {
+          fillSelect(
+            envioCategoryIdInput,
+            filterItems(selectData.categories, filterCuotasCategoryInput.value),
+            'Categoria objetivo (opcional)'
+          );
           fillSelect(
             cuotasCategoryIdInput,
             filterItems(selectData.categories, filterCuotasCategoryInput.value),
@@ -1012,13 +1107,19 @@ app.get('/admin', async (req, res) => {
                 if (cfg && cfg.monto_envio_gratis != null) envioInput.value = Number(cfg.monto_envio_gratis);
                 if (cfg && cfg.monto_cuotas != null) cuotasInput.value = Number(cfg.monto_cuotas);
                 if (cfg && cfg.monto_regalo != null) regaloInput.value = Number(cfg.monto_regalo);
+                if (cfg && cfg.enable_envio_rule != null) enableEnvioRuleInput.checked = !!cfg.enable_envio_rule;
+                if (cfg && cfg.enable_cuotas_rule != null) enableCuotasRuleInput.checked = !!cfg.enable_cuotas_rule;
+                if (cfg && cfg.enable_regalo_rule != null) enableRegaloRuleInput.checked = !!cfg.enable_regalo_rule;
+                if (cfg && cfg.envio_min_amount != null) envioMinAmountInput.value = Number(cfg.envio_min_amount);
+                if (cfg && cfg.envio_category_id != null) preselected.envio_category_id = String(cfg.envio_category_id || '');
+                if (cfg && cfg.envio_product_id != null) preselected.envio_product_id = String(cfg.envio_product_id || '');
                 if (cfg && cfg.cuotas_threshold_amount != null) cuotasThresholdAmountInput.value = Number(cfg.cuotas_threshold_amount);
-                if (cfg && cfg.cuotas_category_id != null) cuotasCategoryIdInput.value = String(cfg.cuotas_category_id || '');
-                if (cfg && cfg.cuotas_product_id != null) cuotasProductIdInput.value = String(cfg.cuotas_product_id || '');
+                if (cfg && cfg.cuotas_category_id != null) preselected.cuotas_category_id = String(cfg.cuotas_category_id || '');
+                if (cfg && cfg.cuotas_product_id != null) preselected.cuotas_product_id = String(cfg.cuotas_product_id || '');
                 if (cfg && cfg.regalo_min_amount != null) regaloMinAmountInput.value = Number(cfg.regalo_min_amount);
-                if (cfg && cfg.regalo_primary_product_id != null) regaloPrimaryProductIdInput.value = String(cfg.regalo_primary_product_id || '');
-                if (cfg && cfg.regalo_secondary_product_id != null) regaloSecondaryProductIdInput.value = String(cfg.regalo_secondary_product_id || '');
-                if (cfg && cfg.regalo_gift_product_id != null) regaloGiftProductIdInput.value = String(cfg.regalo_gift_product_id || '');
+                if (cfg && cfg.regalo_primary_product_id != null) preselected.regalo_primary_product_id = String(cfg.regalo_primary_product_id || '');
+                if (cfg && cfg.regalo_secondary_product_id != null) preselected.regalo_secondary_product_id = String(cfg.regalo_secondary_product_id || '');
+                if (cfg && cfg.regalo_gift_product_id != null) preselected.regalo_gift_product_id = String(cfg.regalo_gift_product_id || '');
               }
             } catch (_) {}
 
@@ -1031,6 +1132,14 @@ app.get('/admin', async (req, res) => {
               selectData.categories = categories;
               refreshProductSelects();
               refreshCategorySelects();
+
+              if (preselected.envio_category_id) envioCategoryIdInput.value = preselected.envio_category_id;
+              if (preselected.envio_product_id) envioProductIdInput.value = preselected.envio_product_id;
+              if (preselected.cuotas_category_id) cuotasCategoryIdInput.value = preselected.cuotas_category_id;
+              if (preselected.cuotas_product_id) cuotasProductIdInput.value = preselected.cuotas_product_id;
+              if (preselected.regalo_primary_product_id) regaloPrimaryProductIdInput.value = preselected.regalo_primary_product_id;
+              if (preselected.regalo_secondary_product_id) regaloSecondaryProductIdInput.value = preselected.regalo_secondary_product_id;
+              if (preselected.regalo_gift_product_id) regaloGiftProductIdInput.value = preselected.regalo_gift_product_id;
 
               filterCuotasProductInput.addEventListener('input', refreshProductSelects);
               filterRegaloPrimaryInput.addEventListener('input', refreshProductSelects);
@@ -1057,6 +1166,12 @@ app.post('/admin/save', async (req, res) => {
   const envio = Number(req.body.envio);
   const cuotas = Number(req.body.cuotas);
   const regalo = Number(req.body.regalo);
+  const enableEnvioRule = req.body.enable_envio_rule === '1';
+  const enableCuotasRule = req.body.enable_cuotas_rule === '1';
+  const enableRegaloRule = req.body.enable_regalo_rule === '1';
+  const envioMinAmount = Number(req.body.envio_min_amount || 0);
+  const envioCategoryId = String(req.body.envio_category_id || '').trim();
+  const envioProductId = String(req.body.envio_product_id || '').trim();
   const cuotasThresholdAmount = Number(req.body.cuotas_threshold_amount || 0);
   const cuotasCategoryId = String(req.body.cuotas_category_id || '').trim();
   const cuotasProductId = String(req.body.cuotas_product_id || '').trim();
@@ -1066,7 +1181,7 @@ app.post('/admin/save', async (req, res) => {
   const regaloGiftProductId = String(req.body.regalo_gift_product_id || '').trim();
 
   if (!storeId) return res.status(400).send('Missing store_id');
-  if ([envio, cuotas, regalo, cuotasThresholdAmount, regaloMinAmount].some((n) => Number.isNaN(n) || n < 0)) {
+  if ([envio, cuotas, regalo, envioMinAmount, cuotasThresholdAmount, regaloMinAmount].some((n) => Number.isNaN(n) || n < 0)) {
     return res.status(400).send('Invalid numeric values');
   }
 
@@ -1081,6 +1196,12 @@ app.post('/admin/save', async (req, res) => {
     await pool.query(
       `INSERT INTO store_goal_settings (
          store_id,
+         enable_envio_rule,
+         enable_cuotas_rule,
+         enable_regalo_rule,
+         envio_min_amount,
+         envio_category_id,
+         envio_product_id,
          cuotas_threshold_amount,
          cuotas_category_id,
          cuotas_product_id,
@@ -1090,9 +1211,15 @@ app.post('/admin/save', async (req, res) => {
          regalo_gift_product_id,
          updated_at
        )
-       VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), CURRENT_TIMESTAMP)
+       VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''), NULLIF($10, ''), $11, NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), CURRENT_TIMESTAMP)
        ON CONFLICT (store_id)
        DO UPDATE SET
+         enable_envio_rule = EXCLUDED.enable_envio_rule,
+         enable_cuotas_rule = EXCLUDED.enable_cuotas_rule,
+         enable_regalo_rule = EXCLUDED.enable_regalo_rule,
+         envio_min_amount = EXCLUDED.envio_min_amount,
+         envio_category_id = EXCLUDED.envio_category_id,
+         envio_product_id = EXCLUDED.envio_product_id,
          cuotas_threshold_amount = EXCLUDED.cuotas_threshold_amount,
          cuotas_category_id = EXCLUDED.cuotas_category_id,
          cuotas_product_id = EXCLUDED.cuotas_product_id,
@@ -1103,6 +1230,12 @@ app.post('/admin/save', async (req, res) => {
          updated_at = CURRENT_TIMESTAMP`,
       [
         storeId,
+        enableEnvioRule,
+        enableCuotasRule,
+        enableRegaloRule,
+        envioMinAmount,
+        envioCategoryId,
+        envioProductId,
         cuotasThresholdAmount,
         cuotasCategoryId,
         cuotasProductId,
@@ -1132,6 +1265,12 @@ app.get('/api/config/:storeId', async (req, res) => {
               t.monto_envio_gratis,
               t.monto_cuotas,
               t.monto_regalo,
+              s.enable_envio_rule,
+              s.enable_cuotas_rule,
+              s.enable_regalo_rule,
+              s.envio_min_amount,
+              s.envio_category_id,
+              s.envio_product_id,
               s.cuotas_threshold_amount,
               s.cuotas_category_id,
               s.cuotas_product_id,
