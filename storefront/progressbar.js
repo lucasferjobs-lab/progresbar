@@ -119,7 +119,108 @@
       message = '<span class="tn-progressbar__ok">Felicitaciones, ya tenes todos los beneficios.</span>';
     }
 
-    return { pct, message };
+    return { pct, message, color: '#2563eb' };
+  }
+
+  function applyTemplate(template, vars) {
+    if (!template) return '';
+    return String(template)
+      .replaceAll('{{missing}}', '$' + money(vars.missing || 0))
+      .replaceAll('{{threshold}}', '$' + money(vars.threshold || 0))
+      .replaceAll('{{subtotal}}', '$' + money(vars.subtotal || 0));
+  }
+
+  function buildEnvioResult(envio) {
+    if (!envio || !envio.enabled) return null;
+    if (!envio.has_match && envio.scope !== 'all') return null;
+    if (envio.reached) {
+      return {
+        pct: 100,
+        message: '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
+        color: envio.bar_color || '#2563eb',
+      };
+    }
+    const custom = applyTemplate(envio.text, {
+      missing: envio.missing_amount,
+      threshold: envio.threshold_amount,
+      subtotal: envio.eligible_subtotal,
+    });
+    return {
+      pct: Number(envio.progress || 0) * 100,
+      message: custom || `Te faltan <strong>$${money(envio.missing_amount)}</strong> para envio gratis.`,
+      color: envio.bar_color || '#2563eb',
+    };
+  }
+
+  function buildCuotasResult(cuotas) {
+    if (!cuotas || !cuotas.enabled) return null;
+    if (!cuotas.has_match && cuotas.scope !== 'all') return null;
+    if (cuotas.reached) {
+      return {
+        pct: 100,
+        message: '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
+        color: cuotas.bar_color || '#0ea5e9',
+      };
+    }
+    const custom = applyTemplate(cuotas.text, {
+      missing: cuotas.missing_amount,
+      threshold: cuotas.threshold_amount,
+      subtotal: cuotas.eligible_subtotal,
+    });
+    return {
+      pct: Number(cuotas.progress || 0) * 100,
+      message: custom || `Te faltan <strong>$${money(cuotas.missing_amount)}</strong> para cuotas sin interes.`,
+      color: cuotas.bar_color || '#0ea5e9',
+    };
+  }
+
+  function buildRegaloResult(regalo) {
+    if (!regalo || !regalo.enabled) return null;
+
+    if (regalo.mode === 'combo_products') {
+      if (regalo.reached) {
+        return {
+          pct: 100,
+          message: '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
+          color: regalo.bar_color || '#a855f7',
+        };
+      }
+      if (!regalo.combo_matched) {
+        return {
+          pct: 20,
+          message: 'Agrega ambos productos para activar el regalo.',
+          color: regalo.bar_color || '#a855f7',
+        };
+      }
+      const custom = applyTemplate(regalo.text, {
+        missing: regalo.missing_amount,
+        threshold: regalo.min_amount,
+        subtotal: 0,
+      });
+      return {
+        pct: Number(regalo.progress || 0) * 100,
+        message: custom || `Te faltan <strong>$${money(regalo.missing_amount)}</strong> para obtener el regalo.`,
+        color: regalo.bar_color || '#a855f7',
+      };
+    }
+
+    if (regalo.reached) {
+      return {
+        pct: 100,
+        message: '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
+        color: regalo.bar_color || '#a855f7',
+      };
+    }
+    const custom = applyTemplate(regalo.text, {
+      missing: regalo.missing_amount,
+      threshold: regalo.min_amount,
+      subtotal: 0,
+    });
+    return {
+      pct: Number(regalo.progress || 0) * 100,
+      message: custom || `Te faltan ${Math.max(0, Number(regalo.missing_qty || 0))} unidades y <strong>$${money(regalo.missing_amount)}</strong> para el regalo.`,
+      color: regalo.bar_color || '#a855f7',
+    };
   }
 
   function render(totalAmount) {
@@ -134,39 +235,18 @@
     let result = renderDefault(total);
 
     const adv = state.advanced;
-    if (adv && adv.regalo && (adv.regalo.combo_matched || adv.regalo.has_primary || adv.regalo.has_secondary)) {
-      if (!adv.regalo.combo_matched) {
-        result = {
-          pct: 20,
-          message: 'Para activar regalo combo te falta sumar el segundo producto del combo.',
-        };
-      } else if (!adv.regalo.reached) {
-        result = {
-          pct: Number(adv.regalo.progress || 0) * 100,
-          message: `Combo detectado. Te faltan <strong>$${money(adv.regalo.missing_amount)}</strong> para obtener el regalo.`,
-        };
-      } else {
-        const giftTxt = adv.regalo.gift_product_id ? ` (ID ${adv.regalo.gift_product_id})` : '';
-        result = {
-          pct: 100,
-          message: `<span class="tn-progressbar__ok">Regalo desbloqueado${giftTxt}</span>`,
-        };
-      }
-    } else if (adv && adv.cuotas && adv.cuotas.has_match) {
-      if (!adv.cuotas.reached) {
-        result = {
-          pct: Number(adv.cuotas.progress || 0) * 100,
-          message: `En productos objetivo te faltan <strong>$${money(adv.cuotas.missing_amount)}</strong> para activar cuotas sin interes.`,
-        };
-      } else {
-        result = {
-          pct: 100,
-          message: '<span class="tn-progressbar__ok">Cuotas sin interes activadas para productos objetivo.</span>',
-        };
-      }
-    }
+    const regaloResult = adv ? buildRegaloResult(adv.regalo) : null;
+    const cuotasResult = adv ? buildCuotasResult(adv.cuotas) : null;
+    const envioResult = adv ? buildEnvioResult(adv.envio) : null;
+
+    result = regaloResult || cuotasResult || envioResult || result;
 
     fill.style.width = `${Math.max(0, Math.min(100, result.pct))}%`;
+    if (result.color) {
+      fill.style.background = result.color;
+    } else {
+      fill.style.background = '';
+    }
     text.innerHTML = result.message;
   }
 

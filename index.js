@@ -156,15 +156,28 @@ async function ensureGoalSettingsTable() {
       enable_cuotas_rule BOOLEAN DEFAULT TRUE,
       enable_regalo_rule BOOLEAN DEFAULT TRUE,
       envio_min_amount DECIMAL DEFAULT 0,
+      envio_scope VARCHAR(20) DEFAULT 'all',
       envio_category_id VARCHAR(255),
       envio_product_id VARCHAR(255),
+      envio_bar_color VARCHAR(32),
+      envio_text VARCHAR(255),
       cuotas_threshold_amount DECIMAL DEFAULT 0,
+      cuotas_scope VARCHAR(20) DEFAULT 'all',
       cuotas_category_id VARCHAR(255),
       cuotas_product_id VARCHAR(255),
+      cuotas_bar_color VARCHAR(32),
+      cuotas_text VARCHAR(255),
       regalo_min_amount DECIMAL DEFAULT 0,
+      regalo_mode VARCHAR(32) DEFAULT 'combo_products',
       regalo_primary_product_id VARCHAR(255),
       regalo_secondary_product_id VARCHAR(255),
+      regalo_target_type VARCHAR(32) DEFAULT 'same_product_qty',
+      regalo_target_qty INTEGER DEFAULT 0,
+      regalo_target_product_id VARCHAR(255),
+      regalo_target_category_id VARCHAR(255),
       regalo_gift_product_id VARCHAR(255),
+      regalo_bar_color VARCHAR(32),
+      regalo_text VARCHAR(255),
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -173,8 +186,21 @@ async function ensureGoalSettingsTable() {
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS enable_cuotas_rule BOOLEAN DEFAULT TRUE;`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS enable_regalo_rule BOOLEAN DEFAULT TRUE;`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_min_amount DECIMAL DEFAULT 0;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_scope VARCHAR(20) DEFAULT 'all';`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_category_id VARCHAR(255);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_product_id VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_bar_color VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_text VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_scope VARCHAR(20) DEFAULT 'all';`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_bar_color VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_text VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_mode VARCHAR(32) DEFAULT 'combo_products';`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_target_type VARCHAR(32) DEFAULT 'same_product_qty';`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_target_qty INTEGER DEFAULT 0;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_target_product_id VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_target_category_id VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_bar_color VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text VARCHAR(255);`);
 
   goalSettingsTableReady = true;
 }
@@ -336,141 +362,152 @@ async function evaluateAdvancedGoals(storeId, payload) {
   );
   const settings = settingsResult.rows[0];
   if (!settings) {
-    return { cuotas: null, regalo: null, cart_total: norm.total_amount };
+    return { envio: null, cuotas: null, regalo: null, cart_total: norm.total_amount };
   }
 
   const accessToken = settings.access_token;
   const out = { envio: null, cuotas: null, regalo: null, cart_total: norm.total_amount };
-
-  const envioEnabled = settings.enable_envio_rule !== false;
-  const envioThreshold = toNumberOrNull(settings.envio_min_amount) || 0;
-  const envioCategoryId = String(settings.envio_category_id || '').trim();
-  const envioProductId = String(settings.envio_product_id || '').trim();
-
-  if (envioEnabled && envioThreshold > 0) {
-    let eligibleSubtotal = 0;
-    let hasMatch = !envioCategoryId && !envioProductId;
-
-    for (const item of norm.items) {
-      let matches = false;
-      if (!envioCategoryId && !envioProductId) {
-        matches = true;
-      }
-      if (!matches && envioProductId && item.product_id === envioProductId) {
-        matches = true;
-      }
-
-      if (!matches && envioCategoryId) {
-        const localCats = item.categories || [];
-        if (localCats.includes(envioCategoryId)) {
-          matches = true;
-        } else if (accessToken) {
-          try {
-            const remoteCats = await fetchProductCategories(storeId, accessToken, item.product_id);
-            if (remoteCats.includes(envioCategoryId)) {
-              matches = true;
-            }
-          } catch (_) {}
-        }
-      }
-
-      if (matches) {
-        hasMatch = true;
-        eligibleSubtotal += toNumberOrNull(item.line_total) || 0;
+  async function itemMatchesScope(item, scope, productId, categoryId) {
+    if (scope === 'all') return true;
+    if (scope === 'product') return productId && item.product_id === productId;
+    if (scope === 'category') {
+      if (!categoryId) return false;
+      const localCats = item.categories || [];
+      if (localCats.includes(categoryId)) return true;
+      if (!accessToken) return false;
+      try {
+        const remoteCats = await fetchProductCategories(storeId, accessToken, item.product_id);
+        return remoteCats.includes(categoryId);
+      } catch (_) {
+        return false;
       }
     }
+    return false;
+  }
 
-    const missing = Math.max(0, envioThreshold - eligibleSubtotal);
-    out.envio = {
+  async function evaluateAmountRule(ruleType) {
+    const enabled = settings[`enable_${ruleType}_rule`] !== false;
+    const thresholdField = ruleType === 'envio' ? 'envio_min_amount' : 'cuotas_threshold_amount';
+    const scope = String(settings[`${ruleType}_scope`] || 'all').trim();
+    const productId = String(settings[`${ruleType}_product_id`] || '').trim();
+    const categoryId = String(settings[`${ruleType}_category_id`] || '').trim();
+    const barColor = String(settings[`${ruleType}_bar_color`] || '').trim();
+    const text = String(settings[`${ruleType}_text`] || '').trim();
+    const threshold = toNumberOrNull(settings[thresholdField]) || 0;
+
+    if (!enabled || threshold <= 0) return null;
+
+    let eligibleSubtotal = 0;
+    let hasMatch = scope === 'all';
+
+    for (const item of norm.items) {
+      // eslint-disable-next-line no-await-in-loop
+      const matches = await itemMatchesScope(item, scope, productId, categoryId);
+      if (!matches) continue;
+      hasMatch = true;
+      eligibleSubtotal += toNumberOrNull(item.line_total) || 0;
+    }
+
+    const missing = Math.max(0, threshold - eligibleSubtotal);
+    return {
+      enabled: true,
       has_match: hasMatch,
-      threshold_amount: envioThreshold,
+      scope,
+      threshold_amount: threshold,
       eligible_subtotal: eligibleSubtotal,
       missing_amount: missing,
       reached: hasMatch && missing <= 0,
+      progress: threshold > 0 ? Math.max(0, Math.min(1, eligibleSubtotal / threshold)) : 0,
       target: {
-        category_id: envioCategoryId || null,
-        product_id: envioProductId || null,
+        category_id: categoryId || null,
+        product_id: productId || null,
       },
-      progress: envioThreshold > 0 ? Math.max(0, Math.min(1, eligibleSubtotal / envioThreshold)) : 0,
+      bar_color: barColor || null,
+      text: text || null,
     };
   }
 
-  const cuotasEnabled = settings.enable_cuotas_rule !== false;
-  const cuotasThreshold = toNumberOrNull(settings.cuotas_threshold_amount) || 0;
-  const cuotasCategoryId = String(settings.cuotas_category_id || '').trim();
-  const cuotasProductId = String(settings.cuotas_product_id || '').trim();
-
-  if (cuotasEnabled && cuotasThreshold > 0 && (cuotasCategoryId || cuotasProductId)) {
-    let eligibleSubtotal = 0;
-    let hasMatch = false;
-
-    for (const item of norm.items) {
-      let matches = false;
-      if (cuotasProductId && item.product_id === cuotasProductId) {
-        matches = true;
-      }
-
-      if (!matches && cuotasCategoryId) {
-        const localCats = item.categories || [];
-        if (localCats.includes(cuotasCategoryId)) {
-          matches = true;
-        } else if (accessToken) {
-          try {
-            const remoteCats = await fetchProductCategories(storeId, accessToken, item.product_id);
-            if (remoteCats.includes(cuotasCategoryId)) {
-              matches = true;
-            }
-          } catch (_) {}
-        }
-      }
-
-      if (matches) {
-        hasMatch = true;
-        eligibleSubtotal += toNumberOrNull(item.line_total) || 0;
-      }
-    }
-
-    const missing = Math.max(0, cuotasThreshold - eligibleSubtotal);
-    out.cuotas = {
-      has_match: hasMatch,
-      threshold_amount: cuotasThreshold,
-      eligible_subtotal: eligibleSubtotal,
-      missing_amount: missing,
-      reached: hasMatch && missing <= 0,
-      target: {
-        category_id: cuotasCategoryId || null,
-        product_id: cuotasProductId || null,
-      },
-      progress: cuotasThreshold > 0 ? Math.max(0, Math.min(1, eligibleSubtotal / cuotasThreshold)) : 0,
-    };
-  }
+  out.envio = await evaluateAmountRule('envio');
+  out.cuotas = await evaluateAmountRule('cuotas');
 
   const regaloEnabled = settings.enable_regalo_rule !== false;
-  const regaloMin = toNumberOrNull(settings.regalo_min_amount) || 0;
-  const regaloPrimary = String(settings.regalo_primary_product_id || '').trim();
-  const regaloSecondary = String(settings.regalo_secondary_product_id || '').trim();
+  const regaloMode = String(settings.regalo_mode || 'combo_products').trim();
+  const regaloText = String(settings.regalo_text || '').trim();
+  const regaloBarColor = String(settings.regalo_bar_color || '').trim();
   const regaloGift = String(settings.regalo_gift_product_id || '').trim();
+  const regaloMin = Math.max(0, toNumberOrNull(settings.regalo_min_amount) || 0);
 
-  if (regaloEnabled && regaloMin > 0 && regaloPrimary && regaloSecondary) {
-    const hasPrimary = norm.items.some((i) => i.product_id === regaloPrimary);
-    const hasSecondary = norm.items.some((i) => i.product_id === regaloSecondary);
-    const comboMatched = hasPrimary && hasSecondary;
-    const missing = comboMatched ? Math.max(0, regaloMin - norm.total_amount) : regaloMin;
+  if (regaloEnabled) {
+    if (regaloMode === 'combo_products') {
+      const regaloPrimary = String(settings.regalo_primary_product_id || '').trim();
+      const regaloSecondary = String(settings.regalo_secondary_product_id || '').trim();
+      const hasPrimary = !!regaloPrimary && norm.items.some((i) => i.product_id === regaloPrimary);
+      const hasSecondary = !!regaloSecondary && norm.items.some((i) => i.product_id === regaloSecondary);
+      const comboMatched = hasPrimary && hasSecondary;
+      const missing = comboMatched ? Math.max(0, regaloMin - norm.total_amount) : regaloMin;
+      out.regalo = {
+        enabled: true,
+        mode: 'combo_products',
+        combo_matched: comboMatched,
+        has_primary: hasPrimary,
+        has_secondary: hasSecondary,
+        min_amount: regaloMin,
+        missing_amount: missing,
+        reached: comboMatched && missing <= 0,
+        gift_product_id: regaloGift || null,
+        progress: comboMatched && regaloMin > 0 ? Math.max(0, Math.min(1, norm.total_amount / regaloMin)) : (comboMatched ? 1 : 0),
+        target: {
+          primary_product_id: regaloPrimary || null,
+          secondary_product_id: regaloSecondary || null,
+        },
+        bar_color: regaloBarColor || null,
+        text: regaloText || null,
+      };
+    } else {
+      const targetType = String(settings.regalo_target_type || 'same_product_qty').trim();
+      const targetQty = Math.max(0, Number(settings.regalo_target_qty || 0));
+      const targetProductId = String(settings.regalo_target_product_id || '').trim();
+      const targetCategoryId = String(settings.regalo_target_category_id || '').trim();
 
-    out.regalo = {
-      combo_matched: comboMatched,
-      has_primary: hasPrimary,
-      has_secondary: hasSecondary,
-      min_amount: regaloMin,
-      missing_amount: missing,
-      reached: comboMatched && missing <= 0,
-      gift_product_id: regaloGift || null,
-      progress: comboMatched && regaloMin > 0 ? Math.max(0, Math.min(1, norm.total_amount / regaloMin)) : 0,
-      target: {
-        primary_product_id: regaloPrimary,
-        secondary_product_id: regaloSecondary,
-      },
-    };
+      let eligibleQty = 0;
+      for (const item of norm.items) {
+        let matches = false;
+        if (targetType === 'same_product_qty') {
+          matches = !!targetProductId && item.product_id === targetProductId;
+        } else if (targetType === 'category_qty') {
+          // eslint-disable-next-line no-await-in-loop
+          matches = await itemMatchesScope(item, 'category', '', targetCategoryId);
+        }
+        if (matches) eligibleQty += Math.max(0, Number(item.quantity || 0));
+      }
+
+      const qtyReached = targetQty > 0 ? eligibleQty >= targetQty : false;
+      const amountMissing = Math.max(0, regaloMin - norm.total_amount);
+      const missingQty = Math.max(0, targetQty - eligibleQty);
+      const reached = qtyReached && amountMissing <= 0;
+      const progressQty = targetQty > 0 ? Math.max(0, Math.min(1, eligibleQty / targetQty)) : 0;
+      const progressAmount = regaloMin > 0 ? Math.max(0, Math.min(1, norm.total_amount / regaloMin)) : 1;
+
+      out.regalo = {
+        enabled: true,
+        mode: 'target_rule',
+        target_type: targetType,
+        target_qty: targetQty,
+        eligible_qty: eligibleQty,
+        missing_qty: missingQty,
+        min_amount: regaloMin,
+        missing_amount: amountMissing,
+        reached,
+        gift_product_id: regaloGift || null,
+        progress: Math.min(progressQty, progressAmount),
+        target: {
+          product_id: targetProductId || null,
+          category_id: targetCategoryId || null,
+        },
+        bar_color: regaloBarColor || null,
+        text: regaloText || null,
+      };
+    }
   }
 
   return out;
@@ -557,11 +594,6 @@ app.get('/instalacion', async (req, res) => {
 app.get('/admin', async (req, res) => {
   const storeId = String(req.query.store_id || req.query.store || '');
   const safeStoreId = storeId.replace(/[^0-9]/g, '');
-  const defaultConfig = {
-    monto_envio_gratis: 50000,
-    monto_cuotas: 80000,
-    monto_regalo: 100000,
-  };
 
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -571,300 +603,257 @@ app.get('/admin', async (req, res) => {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ProgressBar - Configuración</title>
+    <title>ProgressBar - Configuracion</title>
     <style>
       :root {
-        --bg-0: #eff4f8;
-        --bg-1: #f8fbfd;
+        --bg: #eef3fb;
         --card: #ffffff;
-        --line: #d7e2ee;
-        --text: #102238;
-        --muted: #5a6b7e;
-        --brand: #0b6dfa;
-        --brand-2: #2aa0ff;
-        --ok: #0e9f6e;
-        --warn: #db8a00;
-        --gift: #b547db;
-        --shadow: 0 18px 48px rgba(11, 32, 68, 0.12);
+        --text: #0f172a;
+        --muted: #475467;
+        --line: #d0ddf0;
+        --brand: #2563eb;
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 24px;
-        font-family: "Segoe UI", "Trebuchet MS", Arial, sans-serif;
+        padding: 20px 12px;
+        font-family: "Segoe UI", Arial, sans-serif;
+        background: radial-gradient(circle at top left, #ffffff, var(--bg));
         color: var(--text);
-        background:
-          radial-gradient(circle at 0 0, #d9ecff 0%, transparent 35%),
-          radial-gradient(circle at 100% 0, #d7f4ef 0%, transparent 30%),
-          linear-gradient(160deg, var(--bg-0), var(--bg-1));
       }
       .card {
-        max-width: 820px;
+        width: min(900px, 100%);
         margin: 0 auto;
         background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        padding: 24px;
-        box-shadow: var(--shadow);
+        border: 1px solid #d9e4f5;
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: 0 10px 28px rgba(9, 30, 66, 0.08);
       }
-      .hero {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 18px;
-      }
-      h1 {
-        margin: 0;
-        font-size: 27px;
-        letter-spacing: 0.2px;
-      }
-      .subtitle {
-        margin: 6px 0 0;
-        color: var(--muted);
-      }
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 140px;
-        height: 34px;
-        border-radius: 999px;
-        border: 1px solid #c8dcff;
-        background: #ebf4ff;
-        color: #0b4dba;
-        font-size: 13px;
-        font-weight: 700;
-        padding: 0 12px;
-      }
-      .grid {
-        display: grid;
-        gap: 12px;
-      }
-      .settings-shell {
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        padding: 12px;
-        background: #f9fcff;
-      }
-      .tabs {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-bottom: 12px;
-      }
+      h1 { margin: 0 0 12px; font-size: 30px; }
+      .settings-shell { border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+      .tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
       .tab-btn {
-        margin: 0;
-        width: auto;
-        height: 34px;
-        padding: 0 12px;
+        border: 1px solid #b7ccef;
+        background: #f6f9ff;
+        color: #1e293b;
         border-radius: 999px;
-        border: 1px solid #cbd9ea;
-        background: #fff;
-        color: #28415e;
-        font-size: 12px;
+        padding: 8px 14px;
+        font-weight: 600;
+        cursor: pointer;
+        width: auto;
+        height: auto;
         text-transform: none;
         letter-spacing: 0;
-      }
-      .tab-btn.active {
-        border-color: #8bb8ff;
-        background: #eaf3ff;
-        color: #0b4dba;
-      }
-      .tab-panel { display: none; }
-      .tab-panel.active { display: grid; gap: 12px; }
-      .goal {
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 14px;
-        background: #fcfeff;
-      }
-      .goal-title {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        margin: 0 0 8px;
-        font-size: 14px;
-        font-weight: 700;
-      }
-      .ico {
-        width: 24px;
-        height: 24px;
-        border-radius: 999px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 13px;
-        font-weight: 800;
-        color: #fff;
-      }
-      .ico-envio { background: var(--ok); }
-      .ico-cuotas { background: var(--warn); }
-      .ico-regalo { background: var(--gift); }
-      .goal-note {
-        margin: 0 0 8px;
-        color: var(--muted);
-        font-size: 12px;
-      }
-      .search-item {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-        border: 1px solid #d8e3ef;
-        border-radius: 8px;
-        padding: 8px;
-        margin-top: 6px;
-        background: #fff;
-      }
-      .search-item button {
         margin: 0;
-        width: auto;
-        height: 30px;
-        padding: 0 10px;
-        font-size: 12px;
-        text-transform: none;
       }
-      .search-actions {
-        display: flex;
-        gap: 6px;
-      }
-      input[type="number"],
-      input[type="text"],
-      select {
+      .tab-btn.active { background: #e6efff; border-color: #7aa7ff; color: #0b3d91; }
+      .tab-panel { display: none; border: 1px solid #d5e2f5; border-radius: 10px; padding: 12px 10px; }
+      .tab-panel.active { display: block; }
+      .group { display: grid; gap: 6px; }
+      .row { display: grid; gap: 6px; }
+      .row label, .inline label { font-size: 14px; font-weight: 600; }
+      .inline { display: flex; align-items: center; gap: 8px; }
+      input[type="number"], input[type="text"], select {
         width: 100%;
-        height: 42px;
+        height: 40px;
         border: 1px solid #c4d3e5;
-        border-radius: 10px;
+        border-radius: 8px;
         padding: 0 12px;
-        font-size: 15px;
+        font-size: 14px;
         outline: none;
       }
-      input[type="number"]:focus,
-      input[type="text"]:focus,
-      select:focus {
+      input[type="color"] {
+        width: 100%;
+        height: 40px;
+        border: 1px solid #c4d3e5;
+        border-radius: 8px;
+        background: #fff;
+      }
+      input[type="number"]:focus, input[type="text"]:focus, select:focus {
         border-color: #8bb8ff;
         box-shadow: 0 0 0 3px rgba(11, 109, 250, 0.12);
       }
       button {
-        margin-top: 8px;
+        margin-top: 10px;
         width: 100%;
-        height: 46px;
+        height: 44px;
         border: 0;
-        border-radius: 12px;
-        background: linear-gradient(90deg, var(--brand), var(--brand-2));
+        border-radius: 10px;
+        background: var(--brand);
         color: #fff;
-        font-weight: 800;
+        font-weight: 700;
         font-size: 14px;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.2px;
         text-transform: uppercase;
         cursor: pointer;
       }
-      .meta {
-        margin-top: 12px;
-        color: var(--muted);
-        font-size: 13px;
-      }
-      .error {
-        margin-top: 12px;
-        color: #b42318;
-        font-size: 13px;
-      }
+      .meta { margin-top: 12px; color: var(--muted); font-size: 13px; }
+      .error { margin-top: 12px; color: #b42318; font-size: 13px; }
+      .hidden { display: none; }
       @media (max-width: 680px) {
-        body { padding: 14px; }
-        .card { padding: 16px; border-radius: 14px; }
-        h1 { font-size: 23px; }
-        .hero { flex-direction: column; align-items: flex-start; }
+        body { padding: 12px; }
+        .card { padding: 14px; border-radius: 12px; }
+        h1 { font-size: 24px; }
       }
     </style>
   </head>
   <body>
     <main class="card">
-      <div class="hero">
-        <div>
-          <h1>Panel de Objetivos</h1>
-          <p class="subtitle">Define metas de carrito para aumentar conversion y ticket promedio.</p>
-        </div>
-        <span class="badge">ProgressBar Config</span>
-      </div>
+      <h1>Panel de Configuracion</h1>
 
-      <form action="/admin/save" method="POST" class="grid">
+      <form action="/admin/save" method="POST">
         <input type="hidden" name="store_id" id="storeId" value="${safeStoreId}" />
+
         <section class="settings-shell">
           <div class="tabs">
-            <button type="button" class="tab-btn active" data-tab-target="tab-general">Configuracion General</button>
+            <button type="button" class="tab-btn active" data-tab-target="tab-envio">Envio Gratis</button>
             <button type="button" class="tab-btn" data-tab-target="tab-cuotas">Cuotas</button>
             <button type="button" class="tab-btn" data-tab-target="tab-regalo">Regalo</button>
           </div>
 
-          <div id="tab-general" class="tab-panel active">
-            <div class="goal">
-              <p class="goal-title"><span class="ico ico-envio">E</span> Envio Gratis</p>
-              <p class="goal-note">Activa un incentivo inmediato de compra.</p>
-              <label><input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" checked /> Activar regla de envio</label>
-              <input id="envio" type="number" min="0" name="envio" value="${Number(defaultConfig.monto_envio_gratis)}" />
-              <input id="envio_min_amount" type="number" min="0" name="envio_min_amount" placeholder="Monto objetivo de envio para target" />
-              <select id="envio_category_id" name="envio_category_id">
-                <option value="">Categoria objetivo (opcional)</option>
-              </select>
-              <select id="envio_product_id" name="envio_product_id">
-                <option value="">Producto objetivo (opcional, prioriza sobre categoria)</option>
-              </select>
-            </div>
-
-            <div class="goal">
-              <p class="goal-title"><span class="ico ico-cuotas">C</span> Cuotas Sin Interes</p>
-              <p class="goal-note">Empuja productos de mayor valor por financiamiento.</p>
-              <input id="cuotas" type="number" min="0" name="cuotas" value="${Number(defaultConfig.monto_cuotas)}" required />
-            </div>
-
-            <div class="goal">
-              <p class="goal-title"><span class="ico ico-regalo">R</span> Regalo Sorpresa</p>
-              <p class="goal-note">Ultimo gatillo para elevar el subtotal final.</p>
-              <input id="regalo" type="number" min="0" name="regalo" value="${Number(defaultConfig.monto_regalo)}" required />
+          <div id="tab-envio" class="tab-panel active">
+            <div class="group">
+              <div class="inline">
+                <input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" checked />
+                <label for="enable_envio_rule">Activar</label>
+              </div>
+              <div class="row">
+                <label for="envio_min_amount">Desde X monto</label>
+                <input id="envio_min_amount" type="number" min="0" name="envio_min_amount" value="50000" />
+              </div>
+              <div class="row">
+                <label for="envio_scope">Aplica a</label>
+                <select id="envio_scope" name="envio_scope">
+                  <option value="all">Todo el carrito</option>
+                  <option value="product">Producto</option>
+                  <option value="category">Categoria</option>
+                </select>
+              </div>
+              <div class="row hidden" id="envio_product_wrap">
+                <label for="envio_product_id">Producto</label>
+                <select id="envio_product_id" name="envio_product_id"><option value="">Seleccionar</option></select>
+              </div>
+              <div class="row hidden" id="envio_category_wrap">
+                <label for="envio_category_id">Categoria</label>
+                <select id="envio_category_id" name="envio_category_id"><option value="">Seleccionar</option></select>
+              </div>
+              <div class="row">
+                <label for="envio_text">Texto</label>
+                <input id="envio_text" type="text" name="envio_text" />
+              </div>
+              <div class="row">
+                <label for="envio_bar_color">Color barra</label>
+                <input id="envio_bar_color" type="color" name="envio_bar_color" value="#2563eb" />
+              </div>
             </div>
           </div>
 
           <div id="tab-cuotas" class="tab-panel">
-            <div class="goal">
-              <p class="goal-title"><span class="ico ico-cuotas">C</span> Regla Avanzada de Cuotas</p>
-              <p class="goal-note">Configura categoria o producto objetivo para cuotas.</p>
-              <label><input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" checked /> Activar regla de cuotas</label>
-              <input id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" placeholder="Monto objetivo para cuotas (ej: 50000)" />
-              <input id="filter_cuotas_category" type="text" placeholder="Filtrar categorias..." />
-              <select id="cuotas_category_id" name="cuotas_category_id">
-                <option value="">Categoria objetivo (opcional)</option>
-              </select>
-              <input id="filter_cuotas_product" type="text" placeholder="Filtrar productos..." />
-              <select id="cuotas_product_id" name="cuotas_product_id">
-                <option value="">Producto objetivo (opcional, prioriza sobre categoria)</option>
-              </select>
+            <div class="group">
+              <div class="inline">
+                <input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" checked />
+                <label for="enable_cuotas_rule">Activar</label>
+              </div>
+              <div class="row">
+                <label for="cuotas_threshold_amount">Desde X monto</label>
+                <input id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" value="80000" />
+              </div>
+              <div class="row">
+                <label for="cuotas_scope">Aplica a</label>
+                <select id="cuotas_scope" name="cuotas_scope">
+                  <option value="all">Todo el carrito</option>
+                  <option value="product">Producto</option>
+                  <option value="category">Categoria</option>
+                </select>
+              </div>
+              <div class="row hidden" id="cuotas_product_wrap">
+                <label for="cuotas_product_id">Producto</label>
+                <select id="cuotas_product_id" name="cuotas_product_id"><option value="">Seleccionar</option></select>
+              </div>
+              <div class="row hidden" id="cuotas_category_wrap">
+                <label for="cuotas_category_id">Categoria</label>
+                <select id="cuotas_category_id" name="cuotas_category_id"><option value="">Seleccionar</option></select>
+              </div>
+              <div class="row">
+                <label for="cuotas_text">Texto</label>
+                <input id="cuotas_text" type="text" name="cuotas_text" />
+              </div>
+              <div class="row">
+                <label for="cuotas_bar_color">Color barra</label>
+                <input id="cuotas_bar_color" type="color" name="cuotas_bar_color" value="#0ea5e9" />
+              </div>
             </div>
           </div>
 
           <div id="tab-regalo" class="tab-panel">
-            <div class="goal">
-              <p class="goal-title"><span class="ico ico-regalo">R</span> Regla Avanzada de Regalo Combo</p>
-              <p class="goal-note">Ejemplo: remera azul + pantalon azul + monto minimo para entregar regalo.</p>
-              <label><input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" checked /> Activar regla de regalo</label>
-              <input id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" placeholder="Monto minimo carrito para regalo" />
-              <input id="filter_regalo_primary" type="text" placeholder="Filtrar producto principal..." />
-              <select id="regalo_primary_product_id" name="regalo_primary_product_id">
-                <option value="">Producto principal (ej: remera azul)</option>
-              </select>
-              <input id="filter_regalo_secondary" type="text" placeholder="Filtrar producto secundario..." />
-              <select id="regalo_secondary_product_id" name="regalo_secondary_product_id">
-                <option value="">Producto secundario (ej: pantalon azul)</option>
-              </select>
-              <input id="filter_regalo_gift" type="text" placeholder="Filtrar producto regalo..." />
-              <select id="regalo_gift_product_id" name="regalo_gift_product_id">
-                <option value="">Producto regalo</option>
-              </select>
+            <div class="group">
+              <div class="inline">
+                <input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" checked />
+                <label for="enable_regalo_rule">Activar</label>
+              </div>
+              <div class="row">
+                <label for="regalo_mode">Modo</label>
+                <select id="regalo_mode" name="regalo_mode">
+                  <option value="combo_products">Productos juntos</option>
+                  <option value="target_rule">Cantidad o categoria</option>
+                </select>
+              </div>
+              <div class="row">
+                <label for="regalo_min_amount">Desde X monto</label>
+                <input id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" value="100000" />
+              </div>
+
+              <div id="regalo_combo_fields">
+                <div class="row">
+                  <label for="regalo_primary_product_id">Producto 1</label>
+                  <select id="regalo_primary_product_id" name="regalo_primary_product_id"><option value="">Seleccionar</option></select>
+                </div>
+                <div class="row">
+                  <label for="regalo_secondary_product_id">Producto 2</label>
+                  <select id="regalo_secondary_product_id" name="regalo_secondary_product_id"><option value="">Seleccionar</option></select>
+                </div>
+              </div>
+
+              <div id="regalo_target_fields" class="hidden">
+                <div class="row">
+                  <label for="regalo_target_type">Condicion</label>
+                  <select id="regalo_target_type" name="regalo_target_type">
+                    <option value="same_product_qty">Cantidad de producto</option>
+                    <option value="category_qty">Cantidad en categoria</option>
+                  </select>
+                </div>
+                <div class="row">
+                  <label for="regalo_target_qty">Cantidad objetivo</label>
+                  <input id="regalo_target_qty" type="number" min="0" name="regalo_target_qty" value="0" />
+                </div>
+                <div class="row" id="regalo_target_product_wrap">
+                  <label for="regalo_target_product_id">Producto objetivo</label>
+                  <select id="regalo_target_product_id" name="regalo_target_product_id"><option value="">Seleccionar</option></select>
+                </div>
+                <div class="row hidden" id="regalo_target_category_wrap">
+                  <label for="regalo_target_category_id">Categoria objetivo</label>
+                  <select id="regalo_target_category_id" name="regalo_target_category_id"><option value="">Seleccionar</option></select>
+                </div>
+              </div>
+
+              <div class="row">
+                <label for="regalo_gift_product_id">Producto regalo</label>
+                <select id="regalo_gift_product_id" name="regalo_gift_product_id"><option value="">Seleccionar</option></select>
+              </div>
+              <div class="row">
+                <label for="regalo_text">Texto</label>
+                <input id="regalo_text" type="text" name="regalo_text" />
+              </div>
+              <div class="row">
+                <label for="regalo_bar_color">Color barra</label>
+                <input id="regalo_bar_color" type="color" name="regalo_bar_color" value="#a855f7" />
+              </div>
             </div>
           </div>
         </section>
 
-        <button type="submit">Guardar configuración</button>
+        <button type="submit">Guardar configuracion</button>
       </form>
 
       <p class="meta">Store ID: <span id="storeLabel">${safeStoreId || 'pendiente'}</span></p>
@@ -873,7 +862,6 @@ app.get('/admin', async (req, res) => {
 
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
     <script>
-      // Compatibility shims for UMD bundles that expect Node-like globals.
       window.global = window;
       window.process = window.process || { env: {} };
       window.react = window.React;
@@ -889,35 +877,83 @@ app.get('/admin', async (req, res) => {
         const nexoError = document.getElementById('nexoError');
         const storeIdInput = document.getElementById('storeId');
         const storeIdLabel = document.getElementById('storeLabel');
-        const envioInput = document.getElementById('envio');
-        const enableEnvioRuleInput = document.getElementById('enable_envio_rule');
-        const envioMinAmountInput = document.getElementById('envio_min_amount');
-        const envioCategoryIdInput = document.getElementById('envio_category_id');
-        const envioProductIdInput = document.getElementById('envio_product_id');
-        const cuotasInput = document.getElementById('cuotas');
-        const enableCuotasRuleInput = document.getElementById('enable_cuotas_rule');
-        const regaloInput = document.getElementById('regalo');
-        const enableRegaloRuleInput = document.getElementById('enable_regalo_rule');
-        const cuotasThresholdAmountInput = document.getElementById('cuotas_threshold_amount');
-        const cuotasCategoryIdInput = document.getElementById('cuotas_category_id');
-        const cuotasProductIdInput = document.getElementById('cuotas_product_id');
-        const filterCuotasCategoryInput = document.getElementById('filter_cuotas_category');
-        const filterCuotasProductInput = document.getElementById('filter_cuotas_product');
-        const regaloMinAmountInput = document.getElementById('regalo_min_amount');
-        const regaloPrimaryProductIdInput = document.getElementById('regalo_primary_product_id');
-        const regaloSecondaryProductIdInput = document.getElementById('regalo_secondary_product_id');
-        const regaloGiftProductIdInput = document.getElementById('regalo_gift_product_id');
-        const filterRegaloPrimaryInput = document.getElementById('filter_regalo_primary');
-        const filterRegaloSecondaryInput = document.getElementById('filter_regalo_secondary');
-        const filterRegaloGiftInput = document.getElementById('filter_regalo_gift');
+        const initialStoreId = '${safeStoreId}';
         const tabButtons = Array.prototype.slice.call(document.querySelectorAll('.tab-btn'));
         const tabPanels = Array.prototype.slice.call(document.querySelectorAll('.tab-panel'));
-        const initialStoreId = '${safeStoreId}';
-        const selectData = {
-          products: [],
-          categories: [],
-        };
+
+        const envioScopeInput = document.getElementById('envio_scope');
+        const envioProductWrap = document.getElementById('envio_product_wrap');
+        const envioCategoryWrap = document.getElementById('envio_category_wrap');
+        const cuotasScopeInput = document.getElementById('cuotas_scope');
+        const cuotasProductWrap = document.getElementById('cuotas_product_wrap');
+        const cuotasCategoryWrap = document.getElementById('cuotas_category_wrap');
+        const regaloModeInput = document.getElementById('regalo_mode');
+        const regaloTargetTypeInput = document.getElementById('regalo_target_type');
+        const regaloComboFields = document.getElementById('regalo_combo_fields');
+        const regaloTargetFields = document.getElementById('regalo_target_fields');
+        const regaloTargetProductWrap = document.getElementById('regalo_target_product_wrap');
+        const regaloTargetCategoryWrap = document.getElementById('regalo_target_category_wrap');
+
+        const selectData = { products: [], categories: [] };
         const preselected = {};
+
+        function toggleScope(scope, productWrap, categoryWrap) {
+          productWrap.classList.toggle('hidden', scope !== 'product');
+          categoryWrap.classList.toggle('hidden', scope !== 'category');
+        }
+
+        function toggleRegaloMode() {
+          const mode = regaloModeInput.value;
+          const isCombo = mode === 'combo_products';
+          regaloComboFields.classList.toggle('hidden', !isCombo);
+          regaloTargetFields.classList.toggle('hidden', isCombo);
+          toggleRegaloTargetType();
+        }
+
+        function toggleRegaloTargetType() {
+          const type = regaloTargetTypeInput.value;
+          regaloTargetProductWrap.classList.toggle('hidden', type !== 'same_product_qty');
+          regaloTargetCategoryWrap.classList.toggle('hidden', type !== 'category_qty');
+        }
+
+        function initTabs() {
+          tabButtons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              const target = btn.getAttribute('data-tab-target');
+              tabButtons.forEach(function (b) { b.classList.remove('active'); });
+              tabPanels.forEach(function (p) { p.classList.remove('active'); });
+              btn.classList.add('active');
+              const panel = document.getElementById(target);
+              if (panel) panel.classList.add('active');
+            });
+          });
+        }
+
+        function fillSelect(selectEl, items) {
+          const current = String(selectEl.value || '');
+          selectEl.innerHTML = '<option value="">Seleccionar</option>';
+          (items || []).forEach(function (item) {
+            const opt = document.createElement('option');
+            opt.value = String(item.id);
+            opt.textContent = String(item.name || 'Sin nombre') + ' (#' + String(item.id) + ')';
+            selectEl.appendChild(opt);
+          });
+          if (current) selectEl.value = current;
+        }
+
+        async function loadAllProducts(storeId) {
+          const r = await fetch('/api/admin/products/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+          if (!r.ok) return [];
+          const data = await r.json();
+          return Array.isArray(data.items) ? data.items : [];
+        }
+
+        async function loadAllCategories(storeId) {
+          const r = await fetch('/api/admin/categories/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+          if (!r.ok) return [];
+          const data = await r.json();
+          return Array.isArray(data.items) ? data.items : [];
+        }
 
         function dispatch(type, payload) {
           if (window.parent && window.parent !== window) {
@@ -952,207 +988,109 @@ app.get('/admin', async (req, res) => {
           });
         }
 
-        function initTabs() {
-          if (!tabButtons.length || !tabPanels.length) return;
-          tabButtons.forEach(function (btn) {
-            btn.addEventListener('click', function () {
-              const target = btn.getAttribute('data-tab-target');
-              tabButtons.forEach(function (b) { b.classList.remove('active'); });
-              tabPanels.forEach(function (p) { p.classList.remove('active'); });
-              btn.classList.add('active');
-              const panel = document.getElementById(target);
-              if (panel) panel.classList.add('active');
-            });
-          });
-        }
-
-        function fillSelect(selectEl, items, placeholder) {
-          const current = String(selectEl.value || '');
-          selectEl.innerHTML = '';
-          const first = document.createElement('option');
-          first.value = '';
-          first.textContent = placeholder;
-          selectEl.appendChild(first);
-
-          (items || []).forEach(function (item) {
-            const opt = document.createElement('option');
-            opt.value = String(item.id);
-            opt.textContent = String(item.name || 'Sin nombre') + ' (#' + String(item.id) + ')';
-            selectEl.appendChild(opt);
-          });
-
-          if (current) {
-            selectEl.value = current;
-          }
-        }
-
-        function filterItems(items, query) {
-          const q = String(query || '').trim().toLowerCase();
-          if (!q) return items.slice();
-          return items.filter(function (item) {
-            const label = String(item.name || '').toLowerCase();
-            const id = String(item.id || '').toLowerCase();
-            return label.includes(q) || id.includes(q);
-          });
-        }
-
-        function refreshProductSelects() {
-          fillSelect(
-            envioProductIdInput,
-            filterItems(selectData.products, filterCuotasProductInput.value),
-            'Producto objetivo (opcional, prioriza sobre categoria)'
-          );
-          fillSelect(
-            cuotasProductIdInput,
-            filterItems(selectData.products, filterCuotasProductInput.value),
-            'Producto objetivo (opcional, prioriza sobre categoria)'
-          );
-          fillSelect(
-            regaloPrimaryProductIdInput,
-            filterItems(selectData.products, filterRegaloPrimaryInput.value),
-            'Producto principal (ej: remera azul)'
-          );
-          fillSelect(
-            regaloSecondaryProductIdInput,
-            filterItems(selectData.products, filterRegaloSecondaryInput.value),
-            'Producto secundario (ej: pantalon azul)'
-          );
-          fillSelect(
-            regaloGiftProductIdInput,
-            filterItems(selectData.products, filterRegaloGiftInput.value),
-            'Producto regalo'
-          );
-        }
-
-        function refreshCategorySelects() {
-          fillSelect(
-            envioCategoryIdInput,
-            filterItems(selectData.categories, filterCuotasCategoryInput.value),
-            'Categoria objetivo (opcional)'
-          );
-          fillSelect(
-            cuotasCategoryIdInput,
-            filterItems(selectData.categories, filterCuotasCategoryInput.value),
-            'Categoria objetivo (opcional)'
-          );
-        }
-
-        async function loadAllProducts(storeId) {
-          const r = await fetch('/api/admin/products/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
-          if (!r.ok) return [];
-          const data = await r.json();
-          return Array.isArray(data.items) ? data.items : [];
-        }
-
-        async function loadAllCategories(storeId) {
-          const r = await fetch('/api/admin/categories/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
-          if (!r.ok) return [];
-          const data = await r.json();
-          return Array.isArray(data.items) ? data.items : [];
-        }
-
         try {
           initTabs();
-          if (!window.parent || window.parent === window) {
-            return;
-          }
+          toggleScope(envioScopeInput.value, envioProductWrap, envioCategoryWrap);
+          toggleScope(cuotasScopeInput.value, cuotasProductWrap, cuotasCategoryWrap);
+          toggleRegaloMode();
+          envioScopeInput.addEventListener('change', function () { toggleScope(envioScopeInput.value, envioProductWrap, envioCategoryWrap); });
+          cuotasScopeInput.addEventListener('change', function () { toggleScope(cuotasScopeInput.value, cuotasProductWrap, cuotasCategoryWrap); });
+          regaloModeInput.addEventListener('change', toggleRegaloMode);
+          regaloTargetTypeInput.addEventListener('change', toggleRegaloTargetType);
 
-          const nexoLib = window['@tiendanube/nexo'];
-          if (nexoLib && typeof nexoLib.create === 'function') {
-            const nexo = nexoLib.create({ clientId: ${JSON.stringify(CLIENT_ID)}, log: false });
-            await nexoLib.connect(nexo, 5000);
-            nexoLib.iAmReady(nexo);
-
-            try {
-              const storeInfo = await nexoLib.getStoreInfo(nexo);
-              if (storeInfo && storeInfo.id) {
-                const detectedStoreId = String(storeInfo.id);
-                storeIdInput.value = detectedStoreId;
-                storeIdLabel.textContent = detectedStoreId;
-              }
-            } catch (_) {}
-          } else {
-            // Fallback: manual postMessage handshake if SDK is unavailable.
-            dispatchHandshake();
-            let attempts = 0;
-            const retryTimer = setInterval(function () {
-              attempts += 1;
+          if (window.parent && window.parent !== window) {
+            const nexoLib = window['@tiendanube/nexo'];
+            if (nexoLib && typeof nexoLib.create === 'function') {
+              const nexo = nexoLib.create({ clientId: ${JSON.stringify(CLIENT_ID)}, log: false });
+              await nexoLib.connect(nexo, 5000);
+              nexoLib.iAmReady(nexo);
+              try {
+                const storeInfo = await nexoLib.getStoreInfo(nexo);
+                if (storeInfo && storeInfo.id) {
+                  const detectedStoreId = String(storeInfo.id);
+                  storeIdInput.value = detectedStoreId;
+                  storeIdLabel.textContent = detectedStoreId;
+                }
+              } catch (_) {}
+            } else {
               dispatchHandshake();
-              if (attempts >= 20) clearInterval(retryTimer);
-            }, 250);
-            setTimeout(function () { clearInterval(retryTimer); }, 5000);
-            waitFor(ACTION_CONNECTED, 5000).catch(function () {});
-
-            try {
-              const storeInfo = await (function () {
-                const info = waitFor(ACTION_STORE_INFO, 3000);
-                dispatch(ACTION_STORE_INFO);
-                return info;
-              })();
-              if (storeInfo && storeInfo.id) {
-                const detectedStoreId = String(storeInfo.id);
-                storeIdInput.value = detectedStoreId;
-                storeIdLabel.textContent = detectedStoreId;
-              }
-            } catch (_) {}
+              waitFor(ACTION_CONNECTED, 3500).catch(function () {});
+              try {
+                const storeInfo = await (function () {
+                  const info = waitFor(ACTION_STORE_INFO, 3000);
+                  dispatch(ACTION_STORE_INFO);
+                  return info;
+                })();
+                if (storeInfo && storeInfo.id) {
+                  const detectedStoreId = String(storeInfo.id);
+                  storeIdInput.value = detectedStoreId;
+                  storeIdLabel.textContent = detectedStoreId;
+                }
+              } catch (_) {}
+            }
           }
 
-          // Fetch persisted config asynchronously so admin page is never blocked by DB latency.
           const resolvedStoreId = storeIdInput.value || initialStoreId;
-          if (resolvedStoreId) {
-            try {
-              const cfgRes = await fetch('/api/config/' + encodeURIComponent(resolvedStoreId), { cache: 'no-store' });
-              if (cfgRes.ok) {
-                const cfg = await cfgRes.json();
-                if (cfg && cfg.monto_envio_gratis != null) envioInput.value = Number(cfg.monto_envio_gratis);
-                if (cfg && cfg.monto_cuotas != null) cuotasInput.value = Number(cfg.monto_cuotas);
-                if (cfg && cfg.monto_regalo != null) regaloInput.value = Number(cfg.monto_regalo);
-                if (cfg && cfg.enable_envio_rule != null) enableEnvioRuleInput.checked = !!cfg.enable_envio_rule;
-                if (cfg && cfg.enable_cuotas_rule != null) enableCuotasRuleInput.checked = !!cfg.enable_cuotas_rule;
-                if (cfg && cfg.enable_regalo_rule != null) enableRegaloRuleInput.checked = !!cfg.enable_regalo_rule;
-                if (cfg && cfg.envio_min_amount != null) envioMinAmountInput.value = Number(cfg.envio_min_amount);
-                if (cfg && cfg.envio_category_id != null) preselected.envio_category_id = String(cfg.envio_category_id || '');
-                if (cfg && cfg.envio_product_id != null) preselected.envio_product_id = String(cfg.envio_product_id || '');
-                if (cfg && cfg.cuotas_threshold_amount != null) cuotasThresholdAmountInput.value = Number(cfg.cuotas_threshold_amount);
-                if (cfg && cfg.cuotas_category_id != null) preselected.cuotas_category_id = String(cfg.cuotas_category_id || '');
-                if (cfg && cfg.cuotas_product_id != null) preselected.cuotas_product_id = String(cfg.cuotas_product_id || '');
-                if (cfg && cfg.regalo_min_amount != null) regaloMinAmountInput.value = Number(cfg.regalo_min_amount);
-                if (cfg && cfg.regalo_primary_product_id != null) preselected.regalo_primary_product_id = String(cfg.regalo_primary_product_id || '');
-                if (cfg && cfg.regalo_secondary_product_id != null) preselected.regalo_secondary_product_id = String(cfg.regalo_secondary_product_id || '');
-                if (cfg && cfg.regalo_gift_product_id != null) preselected.regalo_gift_product_id = String(cfg.regalo_gift_product_id || '');
-              }
-            } catch (_) {}
+          if (!resolvedStoreId) return;
 
-            try {
-              const [products, categories] = await Promise.all([
-                loadAllProducts(resolvedStoreId),
-                loadAllCategories(resolvedStoreId),
-              ]);
-              selectData.products = products;
-              selectData.categories = categories;
-              refreshProductSelects();
-              refreshCategorySelects();
+          try {
+            const cfgRes = await fetch('/api/config/' + encodeURIComponent(resolvedStoreId), { cache: 'no-store' });
+            if (cfgRes.ok) {
+              const cfg = await cfgRes.json();
+              if (cfg.enable_envio_rule != null) document.getElementById('enable_envio_rule').checked = !!cfg.enable_envio_rule;
+              if (cfg.enable_cuotas_rule != null) document.getElementById('enable_cuotas_rule').checked = !!cfg.enable_cuotas_rule;
+              if (cfg.enable_regalo_rule != null) document.getElementById('enable_regalo_rule').checked = !!cfg.enable_regalo_rule;
+              if (cfg.envio_min_amount != null) document.getElementById('envio_min_amount').value = Number(cfg.envio_min_amount);
+              if (cfg.envio_scope) document.getElementById('envio_scope').value = String(cfg.envio_scope);
+              if (cfg.envio_text != null) document.getElementById('envio_text').value = String(cfg.envio_text || '');
+              if (cfg.envio_bar_color) document.getElementById('envio_bar_color').value = String(cfg.envio_bar_color);
+              if (cfg.cuotas_threshold_amount != null) document.getElementById('cuotas_threshold_amount').value = Number(cfg.cuotas_threshold_amount);
+              if (cfg.cuotas_scope) document.getElementById('cuotas_scope').value = String(cfg.cuotas_scope);
+              if (cfg.cuotas_text != null) document.getElementById('cuotas_text').value = String(cfg.cuotas_text || '');
+              if (cfg.cuotas_bar_color) document.getElementById('cuotas_bar_color').value = String(cfg.cuotas_bar_color);
+              if (cfg.regalo_mode) document.getElementById('regalo_mode').value = String(cfg.regalo_mode);
+              if (cfg.regalo_min_amount != null) document.getElementById('regalo_min_amount').value = Number(cfg.regalo_min_amount);
+              if (cfg.regalo_target_type) document.getElementById('regalo_target_type').value = String(cfg.regalo_target_type);
+              if (cfg.regalo_target_qty != null) document.getElementById('regalo_target_qty').value = Number(cfg.regalo_target_qty);
+              if (cfg.regalo_text != null) document.getElementById('regalo_text').value = String(cfg.regalo_text || '');
+              if (cfg.regalo_bar_color) document.getElementById('regalo_bar_color').value = String(cfg.regalo_bar_color);
 
-              if (preselected.envio_category_id) envioCategoryIdInput.value = preselected.envio_category_id;
-              if (preselected.envio_product_id) envioProductIdInput.value = preselected.envio_product_id;
-              if (preselected.cuotas_category_id) cuotasCategoryIdInput.value = preselected.cuotas_category_id;
-              if (preselected.cuotas_product_id) cuotasProductIdInput.value = preselected.cuotas_product_id;
-              if (preselected.regalo_primary_product_id) regaloPrimaryProductIdInput.value = preselected.regalo_primary_product_id;
-              if (preselected.regalo_secondary_product_id) regaloSecondaryProductIdInput.value = preselected.regalo_secondary_product_id;
-              if (preselected.regalo_gift_product_id) regaloGiftProductIdInput.value = preselected.regalo_gift_product_id;
+              preselected.envio_category_id = String(cfg.envio_category_id || '');
+              preselected.envio_product_id = String(cfg.envio_product_id || '');
+              preselected.cuotas_category_id = String(cfg.cuotas_category_id || '');
+              preselected.cuotas_product_id = String(cfg.cuotas_product_id || '');
+              preselected.regalo_primary_product_id = String(cfg.regalo_primary_product_id || '');
+              preselected.regalo_secondary_product_id = String(cfg.regalo_secondary_product_id || '');
+              preselected.regalo_target_product_id = String(cfg.regalo_target_product_id || '');
+              preselected.regalo_target_category_id = String(cfg.regalo_target_category_id || '');
+              preselected.regalo_gift_product_id = String(cfg.regalo_gift_product_id || '');
+            }
+          } catch (_) {}
 
-              filterCuotasProductInput.addEventListener('input', refreshProductSelects);
-              filterRegaloPrimaryInput.addEventListener('input', refreshProductSelects);
-              filterRegaloSecondaryInput.addEventListener('input', refreshProductSelects);
-              filterRegaloGiftInput.addEventListener('input', refreshProductSelects);
-              filterCuotasCategoryInput.addEventListener('input', refreshCategorySelects);
-            } catch (_) {}
-          }
+          toggleScope(envioScopeInput.value, envioProductWrap, envioCategoryWrap);
+          toggleScope(cuotasScopeInput.value, cuotasProductWrap, cuotasCategoryWrap);
+          toggleRegaloMode();
+
+          const [products, categories] = await Promise.all([
+            loadAllProducts(resolvedStoreId),
+            loadAllCategories(resolvedStoreId),
+          ]);
+          selectData.products = products;
+          selectData.categories = categories;
+
+          ['envio_product_id', 'cuotas_product_id', 'regalo_primary_product_id', 'regalo_secondary_product_id', 'regalo_target_product_id', 'regalo_gift_product_id']
+            .forEach(function (id) { fillSelect(document.getElementById(id), selectData.products); });
+          ['envio_category_id', 'cuotas_category_id', 'regalo_target_category_id']
+            .forEach(function (id) { fillSelect(document.getElementById(id), selectData.categories); });
+
+          Object.keys(preselected).forEach(function (key) {
+            const el = document.getElementById(key);
+            if (el && preselected[key]) el.value = preselected[key];
+          });
         } catch (err) {
           if (!initialStoreId) {
-            console.error('[nexo] init error', err);
             nexoError.style.display = 'block';
-            nexoError.textContent = 'No se pudo inicializar Nexo. Verifica la URL dentro del Admin de Tiendanube.';
+            nexoError.textContent = 'No se pudo inicializar Nexo.';
           }
         }
       })();
@@ -1163,25 +1101,38 @@ app.get('/admin', async (req, res) => {
 
 app.post('/admin/save', async (req, res) => {
   const storeId = String(req.body.store_id || '').replace(/[^0-9]/g, '');
-  const envio = Number(req.body.envio);
-  const cuotas = Number(req.body.cuotas);
-  const regalo = Number(req.body.regalo);
   const enableEnvioRule = req.body.enable_envio_rule === '1';
   const enableCuotasRule = req.body.enable_cuotas_rule === '1';
   const enableRegaloRule = req.body.enable_regalo_rule === '1';
+
   const envioMinAmount = Number(req.body.envio_min_amount || 0);
+  const envioScope = String(req.body.envio_scope || 'all').trim();
   const envioCategoryId = String(req.body.envio_category_id || '').trim();
   const envioProductId = String(req.body.envio_product_id || '').trim();
+  const envioText = String(req.body.envio_text || '').trim();
+  const envioBarColor = String(req.body.envio_bar_color || '').trim();
+
   const cuotasThresholdAmount = Number(req.body.cuotas_threshold_amount || 0);
+  const cuotasScope = String(req.body.cuotas_scope || 'all').trim();
   const cuotasCategoryId = String(req.body.cuotas_category_id || '').trim();
   const cuotasProductId = String(req.body.cuotas_product_id || '').trim();
+  const cuotasText = String(req.body.cuotas_text || '').trim();
+  const cuotasBarColor = String(req.body.cuotas_bar_color || '').trim();
+
+  const regaloMode = String(req.body.regalo_mode || 'combo_products').trim();
   const regaloMinAmount = Number(req.body.regalo_min_amount || 0);
   const regaloPrimaryProductId = String(req.body.regalo_primary_product_id || '').trim();
   const regaloSecondaryProductId = String(req.body.regalo_secondary_product_id || '').trim();
+  const regaloTargetType = String(req.body.regalo_target_type || 'same_product_qty').trim();
+  const regaloTargetQty = Number(req.body.regalo_target_qty || 0);
+  const regaloTargetProductId = String(req.body.regalo_target_product_id || '').trim();
+  const regaloTargetCategoryId = String(req.body.regalo_target_category_id || '').trim();
   const regaloGiftProductId = String(req.body.regalo_gift_product_id || '').trim();
+  const regaloText = String(req.body.regalo_text || '').trim();
+  const regaloBarColor = String(req.body.regalo_bar_color || '').trim();
 
   if (!storeId) return res.status(400).send('Missing store_id');
-  if ([envio, cuotas, regalo, envioMinAmount, cuotasThresholdAmount, regaloMinAmount].some((n) => Number.isNaN(n) || n < 0)) {
+  if ([envioMinAmount, cuotasThresholdAmount, regaloMinAmount, regaloTargetQty].some((n) => Number.isNaN(n) || n < 0)) {
     return res.status(400).send('Invalid numeric values');
   }
 
@@ -1190,7 +1141,7 @@ app.post('/admin/save', async (req, res) => {
 
     await pool.query(
       `UPDATE tiendas SET monto_envio_gratis = $1, monto_cuotas = $2, monto_regalo = $3 WHERE store_id = $4`,
-      [envio, cuotas, regalo, storeId]
+      [envioMinAmount, cuotasThresholdAmount, regaloMinAmount, storeId]
     );
 
     await pool.query(
@@ -1200,33 +1151,59 @@ app.post('/admin/save', async (req, res) => {
          enable_cuotas_rule,
          enable_regalo_rule,
          envio_min_amount,
+         envio_scope,
          envio_category_id,
          envio_product_id,
+         envio_bar_color,
+         envio_text,
          cuotas_threshold_amount,
+         cuotas_scope,
          cuotas_category_id,
          cuotas_product_id,
+         cuotas_bar_color,
+         cuotas_text,
          regalo_min_amount,
+         regalo_mode,
          regalo_primary_product_id,
          regalo_secondary_product_id,
+         regalo_target_type,
+         regalo_target_qty,
+         regalo_target_product_id,
+         regalo_target_category_id,
          regalo_gift_product_id,
+         regalo_bar_color,
+         regalo_text,
          updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''), NULLIF($10, ''), $11, NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), CURRENT_TIMESTAMP)
+       VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), $11, $12, NULLIF($13, ''), NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''), $17, $18, NULLIF($19, ''), NULLIF($20, ''), $21, $22, NULLIF($23, ''), NULLIF($24, ''), NULLIF($25, ''), NULLIF($26, ''), NULLIF($27, ''), CURRENT_TIMESTAMP)
        ON CONFLICT (store_id)
        DO UPDATE SET
          enable_envio_rule = EXCLUDED.enable_envio_rule,
          enable_cuotas_rule = EXCLUDED.enable_cuotas_rule,
          enable_regalo_rule = EXCLUDED.enable_regalo_rule,
          envio_min_amount = EXCLUDED.envio_min_amount,
+         envio_scope = EXCLUDED.envio_scope,
          envio_category_id = EXCLUDED.envio_category_id,
          envio_product_id = EXCLUDED.envio_product_id,
+         envio_bar_color = EXCLUDED.envio_bar_color,
+         envio_text = EXCLUDED.envio_text,
          cuotas_threshold_amount = EXCLUDED.cuotas_threshold_amount,
+         cuotas_scope = EXCLUDED.cuotas_scope,
          cuotas_category_id = EXCLUDED.cuotas_category_id,
          cuotas_product_id = EXCLUDED.cuotas_product_id,
+         cuotas_bar_color = EXCLUDED.cuotas_bar_color,
+         cuotas_text = EXCLUDED.cuotas_text,
          regalo_min_amount = EXCLUDED.regalo_min_amount,
+         regalo_mode = EXCLUDED.regalo_mode,
          regalo_primary_product_id = EXCLUDED.regalo_primary_product_id,
          regalo_secondary_product_id = EXCLUDED.regalo_secondary_product_id,
+         regalo_target_type = EXCLUDED.regalo_target_type,
+         regalo_target_qty = EXCLUDED.regalo_target_qty,
+         regalo_target_product_id = EXCLUDED.regalo_target_product_id,
+         regalo_target_category_id = EXCLUDED.regalo_target_category_id,
          regalo_gift_product_id = EXCLUDED.regalo_gift_product_id,
+         regalo_bar_color = EXCLUDED.regalo_bar_color,
+         regalo_text = EXCLUDED.regalo_text,
          updated_at = CURRENT_TIMESTAMP`,
       [
         storeId,
@@ -1234,15 +1211,28 @@ app.post('/admin/save', async (req, res) => {
         enableCuotasRule,
         enableRegaloRule,
         envioMinAmount,
+        envioScope,
         envioCategoryId,
         envioProductId,
+        envioBarColor,
+        envioText,
         cuotasThresholdAmount,
+        cuotasScope,
         cuotasCategoryId,
         cuotasProductId,
+        cuotasBarColor,
+        cuotasText,
         regaloMinAmount,
+        regaloMode,
         regaloPrimaryProductId,
         regaloSecondaryProductId,
+        regaloTargetType,
+        regaloTargetQty,
+        regaloTargetProductId,
+        regaloTargetCategoryId,
         regaloGiftProductId,
+        regaloBarColor,
+        regaloText,
       ]
     );
 
@@ -1269,15 +1259,28 @@ app.get('/api/config/:storeId', async (req, res) => {
               s.enable_cuotas_rule,
               s.enable_regalo_rule,
               s.envio_min_amount,
+              s.envio_scope,
               s.envio_category_id,
               s.envio_product_id,
+              s.envio_bar_color,
+              s.envio_text,
               s.cuotas_threshold_amount,
+              s.cuotas_scope,
               s.cuotas_category_id,
               s.cuotas_product_id,
+              s.cuotas_bar_color,
+              s.cuotas_text,
               s.regalo_min_amount,
+              s.regalo_mode,
               s.regalo_primary_product_id,
               s.regalo_secondary_product_id,
-              s.regalo_gift_product_id
+              s.regalo_target_type,
+              s.regalo_target_qty,
+              s.regalo_target_product_id,
+              s.regalo_target_category_id,
+              s.regalo_gift_product_id,
+              s.regalo_bar_color,
+              s.regalo_text
        FROM tiendas t
        LEFT JOIN store_goal_settings s ON s.store_id = t.store_id
        WHERE t.store_id = $1`,
@@ -1376,3 +1379,4 @@ registerPortalRoutes(app, pool, { clientId: CLIENT_ID });
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] running on port ${PORT}`);
 });
+
