@@ -235,24 +235,7 @@ app.get('/instalacion', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    return res.send(`<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="Cache-Control" content="no-store" />
-    <title>Redirigiendo...</title>
-  </head>
-  <body>
-    <script>
-      try {
-        window.top.location.replace(${JSON.stringify(adminUrl)});
-      } catch (_) {
-        window.location.replace(${JSON.stringify(adminUrl)});
-      }
-    </script>
-    <noscript><a href="${adminUrl}">Continuar</a></noscript>
-  </body>
-</html>`);
+    return res.redirect(302, adminUrl);
   } catch (error) {
     const detail = error.response?.data || error.message;
     console.error('[install] failed:', detail);
@@ -378,7 +361,12 @@ app.get('/admin', async (req, res) => {
     </main>
 
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
-    <script>window.react = window.React;</script>
+    <script>
+      // Compatibility shims for UMD bundles that expect Node-like globals.
+      window.global = window;
+      window.process = window.process || { env: {} };
+      window.react = window.React;
+    </script>
     <script src="https://unpkg.com/@tiendanube/nexo@1.3.0/dist/index.js" crossorigin="anonymous"></script>
     <script>
       (async function initNexo() {
