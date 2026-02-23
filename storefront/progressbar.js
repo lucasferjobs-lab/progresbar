@@ -1,12 +1,17 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
+  const APP_VERSION = '2026-02-23-2';
+  window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
   const scriptSrc = (scriptNode && scriptNode.src) || '';
   const srcUrl = scriptSrc ? new URL(scriptSrc) : null;
   const baseUrl = srcUrl ? srcUrl.origin : window.location.origin;
   const storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
+  if (window.console && typeof window.console.info === 'function') {
+    window.console.info('[ProgressBar] app version:', APP_VERSION, 'store:', storeId || 'unknown');
+  }
 
   const config = {
     envioGratis: 50000,
@@ -110,6 +115,30 @@
     if (!fallbackAnchor || !fallbackAnchor.parentNode) return null;
     fallbackAnchor.parentNode.insertBefore(wrapper, fallbackAnchor);
     return wrapper;
+  }
+
+  function removeBar() {
+    const existing = document.getElementById('app-barra-progreso');
+    if (existing && existing.parentNode) {
+      existing.parentNode.removeChild(existing);
+    }
+  }
+
+  function isCartEmpty(cartSnapshot) {
+    if (cartSnapshot && Array.isArray(cartSnapshot.items) && cartSnapshot.items.length > 0) {
+      return false;
+    }
+
+    const itemsInDom = document.querySelectorAll('.js-ajax-cart-list .js-cart-item');
+    if (itemsInDom.length > 0) return false;
+
+    const emptyState = document.querySelector('.js-empty-ajax-cart');
+    if (emptyState) {
+      const hiddenByStyle = emptyState.style && emptyState.style.display === 'none';
+      if (!hiddenByStyle) return true;
+    }
+
+    return true;
   }
 
   function renderDefault(total) {
@@ -265,7 +294,12 @@
     };
   }
 
-  function render(totalAmount) {
+  function render(totalAmount, cartSnapshot) {
+    if (isCartEmpty(cartSnapshot)) {
+      removeBar();
+      return;
+    }
+
     const wrapper = ensureBarMounted();
     if (!wrapper) return;
 
@@ -357,7 +391,7 @@
       const data = await res.json();
       if (seq !== state.evalSeq) return;
       state.advanced = data;
-      render(cartSnapshot.total_amount);
+      render(cartSnapshot.total_amount, cartSnapshot);
     } catch (_) {
       // Keep default rendering if evaluation endpoint is unavailable.
     } finally {
@@ -379,9 +413,10 @@
       state.raf = null;
       const amount = getSubtotalAmount();
       if (amount != null) {
-        render(amount);
+        const snapshot = buildCartSnapshot(null, amount);
+        render(amount, snapshot);
         if (shouldEvaluate !== false) {
-          scheduleEvaluate(buildCartSnapshot(null, amount));
+          scheduleEvaluate(snapshot);
         }
       }
     });
@@ -442,7 +477,7 @@
   document.addEventListener('cart:updated', function (event) {
     const cart = event && event.detail ? event.detail.cart : null;
     const snapshot = buildCartSnapshot(cart);
-    render(snapshot.total_amount);
+    render(snapshot.total_amount, snapshot);
     scheduleEvaluate(snapshot);
   });
 
@@ -451,8 +486,9 @@
     bindSubtotalObserver();
     bindDomObserver();
     const initial = buildCartSnapshot();
-    render(initial.total_amount);
+    render(initial.total_amount, initial);
     scheduleEvaluate(initial);
     setInterval(function () { scheduleRenderFromDom(false); }, 3000);
   });
 })();
+

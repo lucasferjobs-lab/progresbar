@@ -79,8 +79,24 @@ app.use(['/api/config', '/api/goals'], (req, res, next) => {
 });
 
 // Static files used by storefront script
-app.use('/static', express.static(path.join(__dirname)));
-app.get('/barra.js', (_req, res) => res.sendFile(path.join(__dirname, 'barra.js')));
+app.use('/static', express.static(path.join(__dirname), {
+  etag: false,
+  lastModified: false,
+  maxAge: 0,
+  setHeaders: (res, filePath) => {
+    if (filePath.includes(`${path.sep}storefront${path.sep}`)) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  },
+}));
+app.get('/barra.js', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  return res.sendFile(path.join(__dirname, 'barra.js'));
+});
 app.get('/styles.css', (_req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
 app.get('/estilos.css', (_req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
 
