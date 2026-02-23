@@ -85,9 +85,6 @@
     const existing = document.getElementById('app-barra-progreso');
     if (existing) return existing;
 
-    const anchor = getSubtotalNode() || document.querySelector('.js-cart-item');
-    if (!anchor || !anchor.parentNode) return null;
-
     const wrapper = document.createElement('div');
     wrapper.id = 'app-barra-progreso';
     wrapper.className = 'tn-progressbar';
@@ -98,7 +95,20 @@
       '</div>',
     ].join('');
 
-    anchor.parentNode.insertBefore(wrapper, anchor);
+    const cartList = document.querySelector('.js-ajax-cart-list');
+    if (cartList) {
+      const firstItem = cartList.querySelector('.js-cart-item');
+      if (firstItem && firstItem.parentNode) {
+        firstItem.parentNode.insertBefore(wrapper, firstItem);
+        return wrapper;
+      }
+      cartList.prepend(wrapper);
+      return wrapper;
+    }
+
+    const fallbackAnchor = getSubtotalNode() || document.querySelector('.js-cart-item');
+    if (!fallbackAnchor || !fallbackAnchor.parentNode) return null;
+    fallbackAnchor.parentNode.insertBefore(wrapper, fallbackAnchor);
     return wrapper;
   }
 
@@ -134,17 +144,25 @@
     if (!envio || !envio.enabled) return null;
     if (!envio.has_match && envio.scope !== 'all') return null;
     if (envio.reached) {
+      const reached = String(envio.text_reached || '').trim();
       return {
         pct: 100,
-        message: '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
+        message: reached || '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
         color: envio.bar_color || '#2563eb',
       };
     }
-    const custom = applyTemplate(envio.text, {
-      missing: envio.missing_amount,
-      threshold: envio.threshold_amount,
-      subtotal: envio.eligible_subtotal,
-    });
+    const prefix = String(envio.text_prefix || '').trim();
+    const suffix = String(envio.text_suffix || '').trim();
+    let custom = '';
+    if (prefix || suffix) {
+      custom = `${prefix || 'Te faltan'} <strong>$${money(envio.missing_amount)}</strong> ${suffix || ''}`.trim();
+    } else {
+      custom = applyTemplate(envio.text, {
+        missing: envio.missing_amount,
+        threshold: envio.threshold_amount,
+        subtotal: envio.eligible_subtotal,
+      });
+    }
     return {
       pct: Number(envio.progress || 0) * 100,
       message: custom || `Te faltan <strong>$${money(envio.missing_amount)}</strong> para envio gratis.`,
@@ -156,17 +174,25 @@
     if (!cuotas || !cuotas.enabled) return null;
     if (!cuotas.has_match && cuotas.scope !== 'all') return null;
     if (cuotas.reached) {
+      const reached = String(cuotas.text_reached || '').trim();
       return {
         pct: 100,
-        message: '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
+        message: reached || '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
         color: cuotas.bar_color || '#0ea5e9',
       };
     }
-    const custom = applyTemplate(cuotas.text, {
-      missing: cuotas.missing_amount,
-      threshold: cuotas.threshold_amount,
-      subtotal: cuotas.eligible_subtotal,
-    });
+    const prefix = String(cuotas.text_prefix || '').trim();
+    const suffix = String(cuotas.text_suffix || '').trim();
+    let custom = '';
+    if (prefix || suffix) {
+      custom = `${prefix || 'Te faltan'} <strong>$${money(cuotas.missing_amount)}</strong> ${suffix || ''}`.trim();
+    } else {
+      custom = applyTemplate(cuotas.text, {
+        missing: cuotas.missing_amount,
+        threshold: cuotas.threshold_amount,
+        subtotal: cuotas.eligible_subtotal,
+      });
+    }
     return {
       pct: Number(cuotas.progress || 0) * 100,
       message: custom || `Te faltan <strong>$${money(cuotas.missing_amount)}</strong> para cuotas sin interes.`,
@@ -179,9 +205,10 @@
 
     if (regalo.mode === 'combo_products') {
       if (regalo.reached) {
+        const reached = String(regalo.text_reached || '').trim();
         return {
           pct: 100,
-          message: '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
+          message: reached || '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
           color: regalo.bar_color || '#a855f7',
         };
       }
@@ -192,11 +219,18 @@
           color: regalo.bar_color || '#a855f7',
         };
       }
-      const custom = applyTemplate(regalo.text, {
-        missing: regalo.missing_amount,
-        threshold: regalo.min_amount,
-        subtotal: 0,
-      });
+      const prefix = String(regalo.text_prefix || '').trim();
+      const suffix = String(regalo.text_suffix || '').trim();
+      let custom = '';
+      if (prefix || suffix) {
+        custom = `${prefix || 'Te faltan'} <strong>$${money(regalo.missing_amount)}</strong> ${suffix || ''}`.trim();
+      } else {
+        custom = applyTemplate(regalo.text, {
+          missing: regalo.missing_amount,
+          threshold: regalo.min_amount,
+          subtotal: 0,
+        });
+      }
       return {
         pct: Number(regalo.progress || 0) * 100,
         message: custom || `Te faltan <strong>$${money(regalo.missing_amount)}</strong> para obtener el regalo.`,
@@ -205,17 +239,25 @@
     }
 
     if (regalo.reached) {
+      const reached = String(regalo.text_reached || '').trim();
       return {
         pct: 100,
-        message: '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
+        message: reached || '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
         color: regalo.bar_color || '#a855f7',
       };
     }
-    const custom = applyTemplate(regalo.text, {
-      missing: regalo.missing_amount,
-      threshold: regalo.min_amount,
-      subtotal: 0,
-    });
+    const prefix = String(regalo.text_prefix || '').trim();
+    const suffix = String(regalo.text_suffix || '').trim();
+    let custom = '';
+    if (prefix || suffix) {
+      custom = `${prefix || 'Te faltan'} <strong>$${money(regalo.missing_amount)}</strong> ${suffix || ''}`.trim();
+    } else {
+      custom = applyTemplate(regalo.text, {
+        missing: regalo.missing_amount,
+        threshold: regalo.min_amount,
+        subtotal: 0,
+      });
+    }
     return {
       pct: Number(regalo.progress || 0) * 100,
       message: custom || `Te faltan ${Math.max(0, Number(regalo.missing_qty || 0))} unidades y <strong>$${money(regalo.missing_amount)}</strong> para el regalo.`,

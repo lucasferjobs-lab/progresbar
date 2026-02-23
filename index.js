@@ -161,12 +161,18 @@ async function ensureGoalSettingsTable() {
       envio_product_id VARCHAR(255),
       envio_bar_color VARCHAR(32),
       envio_text VARCHAR(255),
+      envio_text_prefix VARCHAR(255),
+      envio_text_suffix VARCHAR(255),
+      envio_text_reached VARCHAR(255),
       cuotas_threshold_amount DECIMAL DEFAULT 0,
       cuotas_scope VARCHAR(20) DEFAULT 'all',
       cuotas_category_id VARCHAR(255),
       cuotas_product_id VARCHAR(255),
       cuotas_bar_color VARCHAR(32),
       cuotas_text VARCHAR(255),
+      cuotas_text_prefix VARCHAR(255),
+      cuotas_text_suffix VARCHAR(255),
+      cuotas_text_reached VARCHAR(255),
       regalo_min_amount DECIMAL DEFAULT 0,
       regalo_mode VARCHAR(32) DEFAULT 'combo_products',
       regalo_primary_product_id VARCHAR(255),
@@ -178,6 +184,9 @@ async function ensureGoalSettingsTable() {
       regalo_gift_product_id VARCHAR(255),
       regalo_bar_color VARCHAR(32),
       regalo_text VARCHAR(255),
+      regalo_text_prefix VARCHAR(255),
+      regalo_text_suffix VARCHAR(255),
+      regalo_text_reached VARCHAR(255),
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -191,9 +200,15 @@ async function ensureGoalSettingsTable() {
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_product_id VARCHAR(255);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_bar_color VARCHAR(32);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_text VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_text_prefix VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_text_suffix VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS envio_text_reached VARCHAR(255);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_scope VARCHAR(20) DEFAULT 'all';`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_bar_color VARCHAR(32);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_text VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_text_prefix VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_text_suffix VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS cuotas_text_reached VARCHAR(255);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_mode VARCHAR(32) DEFAULT 'combo_products';`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_target_type VARCHAR(32) DEFAULT 'same_product_qty';`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_target_qty INTEGER DEFAULT 0;`);
@@ -201,6 +216,9 @@ async function ensureGoalSettingsTable() {
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_target_category_id VARCHAR(255);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_bar_color VARCHAR(32);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text_prefix VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text_suffix VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text_reached VARCHAR(255);`);
 
   goalSettingsTableReady = true;
 }
@@ -393,6 +411,9 @@ async function evaluateAdvancedGoals(storeId, payload) {
     const categoryId = String(settings[`${ruleType}_category_id`] || '').trim();
     const barColor = String(settings[`${ruleType}_bar_color`] || '').trim();
     const text = String(settings[`${ruleType}_text`] || '').trim();
+    const textPrefix = String(settings[`${ruleType}_text_prefix`] || '').trim();
+    const textSuffix = String(settings[`${ruleType}_text_suffix`] || '').trim();
+    const textReached = String(settings[`${ruleType}_text_reached`] || '').trim();
     const threshold = toNumberOrNull(settings[thresholdField]) || 0;
 
     if (!enabled || threshold <= 0) return null;
@@ -424,6 +445,9 @@ async function evaluateAdvancedGoals(storeId, payload) {
       },
       bar_color: barColor || null,
       text: text || null,
+      text_prefix: textPrefix || null,
+      text_suffix: textSuffix || null,
+      text_reached: textReached || null,
     };
   }
 
@@ -433,6 +457,9 @@ async function evaluateAdvancedGoals(storeId, payload) {
   const regaloEnabled = settings.enable_regalo_rule !== false;
   const regaloMode = String(settings.regalo_mode || 'combo_products').trim();
   const regaloText = String(settings.regalo_text || '').trim();
+  const regaloTextPrefix = String(settings.regalo_text_prefix || '').trim();
+  const regaloTextSuffix = String(settings.regalo_text_suffix || '').trim();
+  const regaloTextReached = String(settings.regalo_text_reached || '').trim();
   const regaloBarColor = String(settings.regalo_bar_color || '').trim();
   const regaloGift = String(settings.regalo_gift_product_id || '').trim();
   const regaloMin = Math.max(0, toNumberOrNull(settings.regalo_min_amount) || 0);
@@ -462,6 +489,9 @@ async function evaluateAdvancedGoals(storeId, payload) {
         },
         bar_color: regaloBarColor || null,
         text: regaloText || null,
+        text_prefix: regaloTextPrefix || null,
+        text_suffix: regaloTextSuffix || null,
+        text_reached: regaloTextReached || null,
       };
     } else {
       const targetType = String(settings.regalo_target_type || 'same_product_qty').trim();
@@ -506,6 +536,9 @@ async function evaluateAdvancedGoals(storeId, payload) {
         },
         bar_color: regaloBarColor || null,
         text: regaloText || null,
+        text_prefix: regaloTextPrefix || null,
+        text_suffix: regaloTextSuffix || null,
+        text_reached: regaloTextReached || null,
       };
     }
   }
@@ -739,8 +772,16 @@ app.get('/admin', async (req, res) => {
                 <select id="envio_category_id" name="envio_category_id"><option value="">Seleccionar</option></select>
               </div>
               <div class="row">
-                <label for="envio_text">Texto</label>
-                <input id="envio_text" type="text" name="envio_text" />
+                <label for="envio_text_prefix">Texto inicial</label>
+                <input id="envio_text_prefix" type="text" name="envio_text_prefix" />
+              </div>
+              <div class="row">
+                <label for="envio_text_suffix">Texto final</label>
+                <input id="envio_text_suffix" type="text" name="envio_text_suffix" />
+              </div>
+              <div class="row">
+                <label for="envio_text_reached">Texto al alcanzar</label>
+                <input id="envio_text_reached" type="text" name="envio_text_reached" />
               </div>
               <div class="row">
                 <label for="envio_bar_color">Color barra</label>
@@ -776,8 +817,16 @@ app.get('/admin', async (req, res) => {
                 <select id="cuotas_category_id" name="cuotas_category_id"><option value="">Seleccionar</option></select>
               </div>
               <div class="row">
-                <label for="cuotas_text">Texto</label>
-                <input id="cuotas_text" type="text" name="cuotas_text" />
+                <label for="cuotas_text_prefix">Texto inicial</label>
+                <input id="cuotas_text_prefix" type="text" name="cuotas_text_prefix" />
+              </div>
+              <div class="row">
+                <label for="cuotas_text_suffix">Texto final</label>
+                <input id="cuotas_text_suffix" type="text" name="cuotas_text_suffix" />
+              </div>
+              <div class="row">
+                <label for="cuotas_text_reached">Texto al alcanzar</label>
+                <input id="cuotas_text_reached" type="text" name="cuotas_text_reached" />
               </div>
               <div class="row">
                 <label for="cuotas_bar_color">Color barra</label>
@@ -842,8 +891,16 @@ app.get('/admin', async (req, res) => {
                 <select id="regalo_gift_product_id" name="regalo_gift_product_id"><option value="">Seleccionar</option></select>
               </div>
               <div class="row">
-                <label for="regalo_text">Texto</label>
-                <input id="regalo_text" type="text" name="regalo_text" />
+                <label for="regalo_text_prefix">Texto inicial</label>
+                <input id="regalo_text_prefix" type="text" name="regalo_text_prefix" />
+              </div>
+              <div class="row">
+                <label for="regalo_text_suffix">Texto final</label>
+                <input id="regalo_text_suffix" type="text" name="regalo_text_suffix" />
+              </div>
+              <div class="row">
+                <label for="regalo_text_reached">Texto al alcanzar</label>
+                <input id="regalo_text_reached" type="text" name="regalo_text_reached" />
               </div>
               <div class="row">
                 <label for="regalo_bar_color">Color barra</label>
@@ -1042,17 +1099,23 @@ app.get('/admin', async (req, res) => {
               if (cfg.enable_regalo_rule != null) document.getElementById('enable_regalo_rule').checked = !!cfg.enable_regalo_rule;
               if (cfg.envio_min_amount != null) document.getElementById('envio_min_amount').value = Number(cfg.envio_min_amount);
               if (cfg.envio_scope) document.getElementById('envio_scope').value = String(cfg.envio_scope);
-              if (cfg.envio_text != null) document.getElementById('envio_text').value = String(cfg.envio_text || '');
+              if (cfg.envio_text_prefix != null) document.getElementById('envio_text_prefix').value = String(cfg.envio_text_prefix || '');
+              if (cfg.envio_text_suffix != null) document.getElementById('envio_text_suffix').value = String(cfg.envio_text_suffix || '');
+              if (cfg.envio_text_reached != null) document.getElementById('envio_text_reached').value = String(cfg.envio_text_reached || '');
               if (cfg.envio_bar_color) document.getElementById('envio_bar_color').value = String(cfg.envio_bar_color);
               if (cfg.cuotas_threshold_amount != null) document.getElementById('cuotas_threshold_amount').value = Number(cfg.cuotas_threshold_amount);
               if (cfg.cuotas_scope) document.getElementById('cuotas_scope').value = String(cfg.cuotas_scope);
-              if (cfg.cuotas_text != null) document.getElementById('cuotas_text').value = String(cfg.cuotas_text || '');
+              if (cfg.cuotas_text_prefix != null) document.getElementById('cuotas_text_prefix').value = String(cfg.cuotas_text_prefix || '');
+              if (cfg.cuotas_text_suffix != null) document.getElementById('cuotas_text_suffix').value = String(cfg.cuotas_text_suffix || '');
+              if (cfg.cuotas_text_reached != null) document.getElementById('cuotas_text_reached').value = String(cfg.cuotas_text_reached || '');
               if (cfg.cuotas_bar_color) document.getElementById('cuotas_bar_color').value = String(cfg.cuotas_bar_color);
               if (cfg.regalo_mode) document.getElementById('regalo_mode').value = String(cfg.regalo_mode);
               if (cfg.regalo_min_amount != null) document.getElementById('regalo_min_amount').value = Number(cfg.regalo_min_amount);
               if (cfg.regalo_target_type) document.getElementById('regalo_target_type').value = String(cfg.regalo_target_type);
               if (cfg.regalo_target_qty != null) document.getElementById('regalo_target_qty').value = Number(cfg.regalo_target_qty);
-              if (cfg.regalo_text != null) document.getElementById('regalo_text').value = String(cfg.regalo_text || '');
+              if (cfg.regalo_text_prefix != null) document.getElementById('regalo_text_prefix').value = String(cfg.regalo_text_prefix || '');
+              if (cfg.regalo_text_suffix != null) document.getElementById('regalo_text_suffix').value = String(cfg.regalo_text_suffix || '');
+              if (cfg.regalo_text_reached != null) document.getElementById('regalo_text_reached').value = String(cfg.regalo_text_reached || '');
               if (cfg.regalo_bar_color) document.getElementById('regalo_bar_color').value = String(cfg.regalo_bar_color);
 
               preselected.envio_category_id = String(cfg.envio_category_id || '');
@@ -1109,14 +1172,18 @@ app.post('/admin/save', async (req, res) => {
   const envioScope = String(req.body.envio_scope || 'all').trim();
   const envioCategoryId = String(req.body.envio_category_id || '').trim();
   const envioProductId = String(req.body.envio_product_id || '').trim();
-  const envioText = String(req.body.envio_text || '').trim();
+  const envioTextPrefix = String(req.body.envio_text_prefix || '').trim();
+  const envioTextSuffix = String(req.body.envio_text_suffix || '').trim();
+  const envioTextReached = String(req.body.envio_text_reached || '').trim();
   const envioBarColor = String(req.body.envio_bar_color || '').trim();
 
   const cuotasThresholdAmount = Number(req.body.cuotas_threshold_amount || 0);
   const cuotasScope = String(req.body.cuotas_scope || 'all').trim();
   const cuotasCategoryId = String(req.body.cuotas_category_id || '').trim();
   const cuotasProductId = String(req.body.cuotas_product_id || '').trim();
-  const cuotasText = String(req.body.cuotas_text || '').trim();
+  const cuotasTextPrefix = String(req.body.cuotas_text_prefix || '').trim();
+  const cuotasTextSuffix = String(req.body.cuotas_text_suffix || '').trim();
+  const cuotasTextReached = String(req.body.cuotas_text_reached || '').trim();
   const cuotasBarColor = String(req.body.cuotas_bar_color || '').trim();
 
   const regaloMode = String(req.body.regalo_mode || 'combo_products').trim();
@@ -1128,7 +1195,9 @@ app.post('/admin/save', async (req, res) => {
   const regaloTargetProductId = String(req.body.regalo_target_product_id || '').trim();
   const regaloTargetCategoryId = String(req.body.regalo_target_category_id || '').trim();
   const regaloGiftProductId = String(req.body.regalo_gift_product_id || '').trim();
-  const regaloText = String(req.body.regalo_text || '').trim();
+  const regaloTextPrefix = String(req.body.regalo_text_prefix || '').trim();
+  const regaloTextSuffix = String(req.body.regalo_text_suffix || '').trim();
+  const regaloTextReached = String(req.body.regalo_text_reached || '').trim();
   const regaloBarColor = String(req.body.regalo_bar_color || '').trim();
 
   if (!storeId) return res.status(400).send('Missing store_id');
@@ -1155,13 +1224,17 @@ app.post('/admin/save', async (req, res) => {
          envio_category_id,
          envio_product_id,
          envio_bar_color,
-         envio_text,
+         envio_text_prefix,
+         envio_text_suffix,
+         envio_text_reached,
          cuotas_threshold_amount,
          cuotas_scope,
          cuotas_category_id,
          cuotas_product_id,
          cuotas_bar_color,
-         cuotas_text,
+         cuotas_text_prefix,
+         cuotas_text_suffix,
+         cuotas_text_reached,
          regalo_min_amount,
          regalo_mode,
          regalo_primary_product_id,
@@ -1172,10 +1245,12 @@ app.post('/admin/save', async (req, res) => {
          regalo_target_category_id,
          regalo_gift_product_id,
          regalo_bar_color,
-         regalo_text,
+         regalo_text_prefix,
+         regalo_text_suffix,
+         regalo_text_reached,
          updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), $11, $12, NULLIF($13, ''), NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''), $17, $18, NULLIF($19, ''), NULLIF($20, ''), $21, $22, NULLIF($23, ''), NULLIF($24, ''), NULLIF($25, ''), NULLIF($26, ''), NULLIF($27, ''), CURRENT_TIMESTAMP)
+       VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13, $14, NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''), $20, $21, NULLIF($22, ''), NULLIF($23, ''), $24, $25, NULLIF($26, ''), NULLIF($27, ''), $28, $29, NULLIF($30, ''), NULLIF($31, ''), NULLIF($32, ''), NULLIF($33, ''), CURRENT_TIMESTAMP)
        ON CONFLICT (store_id)
        DO UPDATE SET
          enable_envio_rule = EXCLUDED.enable_envio_rule,
@@ -1186,13 +1261,17 @@ app.post('/admin/save', async (req, res) => {
          envio_category_id = EXCLUDED.envio_category_id,
          envio_product_id = EXCLUDED.envio_product_id,
          envio_bar_color = EXCLUDED.envio_bar_color,
-         envio_text = EXCLUDED.envio_text,
+         envio_text_prefix = EXCLUDED.envio_text_prefix,
+         envio_text_suffix = EXCLUDED.envio_text_suffix,
+         envio_text_reached = EXCLUDED.envio_text_reached,
          cuotas_threshold_amount = EXCLUDED.cuotas_threshold_amount,
          cuotas_scope = EXCLUDED.cuotas_scope,
          cuotas_category_id = EXCLUDED.cuotas_category_id,
          cuotas_product_id = EXCLUDED.cuotas_product_id,
          cuotas_bar_color = EXCLUDED.cuotas_bar_color,
-         cuotas_text = EXCLUDED.cuotas_text,
+         cuotas_text_prefix = EXCLUDED.cuotas_text_prefix,
+         cuotas_text_suffix = EXCLUDED.cuotas_text_suffix,
+         cuotas_text_reached = EXCLUDED.cuotas_text_reached,
          regalo_min_amount = EXCLUDED.regalo_min_amount,
          regalo_mode = EXCLUDED.regalo_mode,
          regalo_primary_product_id = EXCLUDED.regalo_primary_product_id,
@@ -1203,7 +1282,9 @@ app.post('/admin/save', async (req, res) => {
          regalo_target_category_id = EXCLUDED.regalo_target_category_id,
          regalo_gift_product_id = EXCLUDED.regalo_gift_product_id,
          regalo_bar_color = EXCLUDED.regalo_bar_color,
-         regalo_text = EXCLUDED.regalo_text,
+         regalo_text_prefix = EXCLUDED.regalo_text_prefix,
+         regalo_text_suffix = EXCLUDED.regalo_text_suffix,
+         regalo_text_reached = EXCLUDED.regalo_text_reached,
          updated_at = CURRENT_TIMESTAMP`,
       [
         storeId,
@@ -1215,13 +1296,17 @@ app.post('/admin/save', async (req, res) => {
         envioCategoryId,
         envioProductId,
         envioBarColor,
-        envioText,
+        envioTextPrefix,
+        envioTextSuffix,
+        envioTextReached,
         cuotasThresholdAmount,
         cuotasScope,
         cuotasCategoryId,
         cuotasProductId,
         cuotasBarColor,
-        cuotasText,
+        cuotasTextPrefix,
+        cuotasTextSuffix,
+        cuotasTextReached,
         regaloMinAmount,
         regaloMode,
         regaloPrimaryProductId,
@@ -1232,7 +1317,9 @@ app.post('/admin/save', async (req, res) => {
         regaloTargetCategoryId,
         regaloGiftProductId,
         regaloBarColor,
-        regaloText,
+        regaloTextPrefix,
+        regaloTextSuffix,
+        regaloTextReached,
       ]
     );
 
@@ -1264,12 +1351,18 @@ app.get('/api/config/:storeId', async (req, res) => {
               s.envio_product_id,
               s.envio_bar_color,
               s.envio_text,
+              s.envio_text_prefix,
+              s.envio_text_suffix,
+              s.envio_text_reached,
               s.cuotas_threshold_amount,
               s.cuotas_scope,
               s.cuotas_category_id,
               s.cuotas_product_id,
               s.cuotas_bar_color,
               s.cuotas_text,
+              s.cuotas_text_prefix,
+              s.cuotas_text_suffix,
+              s.cuotas_text_reached,
               s.regalo_min_amount,
               s.regalo_mode,
               s.regalo_primary_product_id,
@@ -1280,7 +1373,10 @@ app.get('/api/config/:storeId', async (req, res) => {
               s.regalo_target_category_id,
               s.regalo_gift_product_id,
               s.regalo_bar_color,
-              s.regalo_text
+              s.regalo_text,
+              s.regalo_text_prefix,
+              s.regalo_text_suffix,
+              s.regalo_text_reached
        FROM tiendas t
        LEFT JOIN store_goal_settings s ON s.store_id = t.store_id
        WHERE t.store_id = $1`,
