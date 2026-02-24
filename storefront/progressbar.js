@@ -124,19 +124,39 @@
     }
   }
 
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) {
+      return false;
+    }
+    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  }
+
+  function countVisibleCartItems() {
+    const nodes = document.querySelectorAll('.js-ajax-cart-list .js-cart-item');
+    let count = 0;
+    nodes.forEach(function (n) {
+      if (isVisible(n)) count += 1;
+    });
+    return count;
+  }
+
   function isCartEmpty(cartSnapshot) {
+    const visibleItems = countVisibleCartItems();
+    if (visibleItems > 0) return false;
+
     if (cartSnapshot && Array.isArray(cartSnapshot.items) && cartSnapshot.items.length > 0) {
       return false;
     }
 
-    const itemsInDom = document.querySelectorAll('.js-ajax-cart-list .js-cart-item');
-    if (itemsInDom.length > 0) return false;
+    if (cartSnapshot && Number(cartSnapshot.total_amount || 0) > 0) return false;
+
+    const domSubtotal = getSubtotalAmount();
+    if (domSubtotal != null && domSubtotal > 0) return false;
 
     const emptyState = document.querySelector('.js-empty-ajax-cart');
-    if (emptyState) {
-      const hiddenByStyle = emptyState.style && emptyState.style.display === 'none';
-      if (!hiddenByStyle) return true;
-    }
+    if (emptyState && isVisible(emptyState)) return true;
 
     return true;
   }
@@ -489,7 +509,17 @@
     const initial = buildCartSnapshot();
     render(initial.total_amount, initial);
     scheduleEvaluate(initial);
-    setInterval(function () { scheduleRenderFromDom(false); }, 3000);
+    setInterval(function () {
+      scheduleRenderFromDom(false);
+      const amount = getSubtotalAmount();
+      const snapshot = buildCartSnapshot(null, amount);
+      if (isCartEmpty(snapshot)) {
+        removeBar();
+        return;
+      }
+      loadConfig().catch(function () {});
+      scheduleEvaluate(snapshot);
+    }, 2500);
   });
 })();
 
