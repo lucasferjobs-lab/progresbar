@@ -1,16 +1,47 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-5';
+  const APP_VERSION = '2026-02-23-7';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
   const scriptSrc = (scriptNode && scriptNode.src) || '';
   const srcUrl = scriptSrc ? new URL(scriptSrc) : null;
   const baseUrl = srcUrl ? srcUrl.origin : window.location.origin;
-  const storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
+  let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
   if (window.console && typeof window.console.info === 'function') {
     window.console.info('[ProgressBar] app version:', APP_VERSION, 'store:', storeId || 'unknown');
+  }
+
+  function detectStoreId() {
+    if (storeId) return storeId;
+    try {
+      const fromLs = window.LS && window.LS.store && (window.LS.store.id || window.LS.store.store_id);
+      if (fromLs) {
+        storeId = String(fromLs);
+        return storeId;
+      }
+    } catch (_) {}
+    try {
+      const fromGlobal = window.Store && (window.Store.id || window.Store.store_id);
+      if (fromGlobal) {
+        storeId = String(fromGlobal);
+        return storeId;
+      }
+    } catch (_) {}
+    try {
+      const hidden = document.querySelector('[name="store_id"], #store_id, [data-store-id]');
+      const v = hidden ? (hidden.value || hidden.getAttribute('data-store-id')) : null;
+      if (v) {
+        storeId = String(v);
+        return storeId;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function getConfigCacheKey() {
+    return `tn_progressbar_cfg_${detectStoreId() || 'unknown'}`;
   }
 
   const config = {
@@ -31,10 +62,10 @@
     evalTimer: null,
     liveConfig: null,
     lastConfigFetchAt: 0,
+    lastStoreIdSynced: null,
   };
-  const configCacheKey = `tn_progressbar_cfg_${storeId || 'unknown'}`;
   try {
-    const cachedCfg = window.localStorage ? window.localStorage.getItem(configCacheKey) : null;
+    const cachedCfg = window.localStorage ? window.localStorage.getItem(getConfigCacheKey()) : null;
     if (cachedCfg) state.liveConfig = JSON.parse(cachedCfg);
   } catch (_) {}
 
@@ -311,6 +342,21 @@
     return false;
   }
 
+  function ensureStoreContext() {
+    const detected = detectStoreId();
+    if (!detected) return null;
+    if (state.lastStoreIdSynced !== detected) {
+      state.lastStoreIdSynced = detected;
+      state.lastConfigFetchAt = 0;
+      try {
+        const cachedCfg = window.localStorage ? window.localStorage.getItem(getConfigCacheKey()) : null;
+        if (cachedCfg) state.liveConfig = JSON.parse(cachedCfg);
+      } catch (_) {}
+      loadConfig().catch(function () {});
+    }
+    return detected;
+  }
+
   function buildCuotasResult(cuotas) {
     if (!cuotas || !cuotas.enabled) return null;
     if (!cuotas.has_match && cuotas.scope !== 'all') return null;
@@ -423,13 +469,10 @@
     const localCfg = state.liveConfig;
     const total = Number(totalAmount || 0);
     const advFresh = !!(adv && Math.abs(Number(adv.cart_total || 0) - total) < 0.01);
+    const hasAdminCfg = !!localCfg;
     let result = null;
     if (!advFresh) {
-      result = {
-        pct: 2,
-        message: '',
-        color: '#2563eb',
-      };
+      result = hasAdminCfg ? { pct: 0, message: '', color: '' } : renderDefault(total);
     } else {
       result = renderDefault(total);
     }
@@ -486,7 +529,7 @@
   }
 
   async function evaluateAdvanced(cartSnapshot) {
-    if (!storeId) return;
+    if (!ensureStoreContext()) return;
     if (!requiresRemoteEvaluation(state.liveConfig)) {
       state.advanced = null;
       return;
@@ -589,7 +632,7 @@
   }
 
   async function loadConfig() {
-    if (!storeId) return;
+    if (!ensureStoreContext()) return;
 
     try {
       const now = Date.now();
@@ -605,7 +648,7 @@
       }
       try {
         if (window.localStorage && data) {
-          window.localStorage.setItem(configCacheKey, JSON.stringify(data));
+          window.localStorage.setItem(getConfigCacheKey(), JSON.stringify(data));
         }
       } catch (_) {}
       if (data && data.monto_envio_gratis != null) config.envioGratis = Number(data.monto_envio_gratis);
@@ -617,6 +660,7 @@
   }
 
   document.addEventListener('cart:updated', function (event) {
+    ensureStoreContext();
     const cart = event && event.detail ? event.detail.cart : null;
     const snapshot = buildCartSnapshot(cart);
     render(snapshot.total_amount, snapshot);
@@ -640,6 +684,7 @@
   });
 
   ensureBarMounted();
+  ensureStoreContext();
   bindSubtotalObserver();
   bindDomObserver();
   const initial = buildCartSnapshot();
@@ -654,6 +699,7 @@
   }).catch(function () {});
 
   setInterval(function () {
+    ensureStoreContext();
     scheduleRenderFromDom(false);
     const amount = getSubtotalAmount();
     const snapshot = buildCartSnapshot(null, amount);
@@ -673,6 +719,8 @@
     }).catch(function () {});
   }, 5000);
 })();
+
+
 
 
 
