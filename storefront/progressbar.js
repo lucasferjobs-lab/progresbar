@@ -1,7 +1,7 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-12';
+  const APP_VERSION = '2026-02-23-13';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
@@ -64,6 +64,7 @@
     lastConfigFetchAt: 0,
     lastStoreIdSynced: null,
     configReady: false,
+    lastRender: null,
   };
   try {
     const cachedCfg = window.localStorage ? window.localStorage.getItem(getConfigCacheKey()) : null;
@@ -182,7 +183,13 @@
   }
 
   function isCartEmpty(cartSnapshot) {
-    // Only trust explicit "empty cart" state from Tiendanube UI.
+    const domSubtotal = getSubtotalAmount();
+    if (domSubtotal != null && domSubtotal > 0) return false;
+
+    const snapshotTotal = Number((cartSnapshot && cartSnapshot.total_amount) || 0);
+    if (snapshotTotal > 0) return false;
+
+    // Trust explicit empty state only when totals are zero.
     const emptyState = document.querySelector('.js-empty-ajax-cart');
     if (emptyState && isVisible(emptyState)) return true;
 
@@ -477,19 +484,20 @@
 
     let result = null;
     if (hasAdminCfg) {
-      result = regaloResult || cuotasResult || envioResult || { pct: 0, message: '&nbsp;', color: '' };
+      result = regaloResult || cuotasResult || envioResult || state.lastRender || renderDefault(total);
     } else {
       // Immediate fallback while admin config is still loading.
       result = renderDefault(total);
     }
 
     fill.style.width = `${Math.max(0, Math.min(100, result.pct))}%`;
-    if (result.color) {
-      fill.style.background = result.color;
-    } else {
-      fill.style.background = '';
-    }
+    fill.style.background = result.color || (state.lastRender && state.lastRender.color) || '#2563eb';
     text.innerHTML = result.message || '&nbsp;';
+    state.lastRender = {
+      pct: Math.max(0, Math.min(100, result.pct)),
+      message: result.message || '&nbsp;',
+      color: result.color || (state.lastRender && state.lastRender.color) || '#2563eb',
+    };
   }
 
   function buildCartSnapshot(cart, forcedTotalAmount) {
@@ -730,6 +738,7 @@
     scheduleRenderFromDom(false);
   }, 250);
 })();
+
 
 
 
