@@ -1,7 +1,7 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-7';
+  const APP_VERSION = '2026-02-23-9';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
@@ -132,7 +132,7 @@
     wrapper.id = 'app-barra-progreso';
     wrapper.className = 'tn-progressbar';
     wrapper.innerHTML = [
-      '<div class="tn-progressbar__text" id="tn-progressbar-text">Calculando beneficios...</div>',
+      '<div class="tn-progressbar__text" id="tn-progressbar-text">&nbsp;</div>',
       '<div class="tn-progressbar__track">',
       '  <div class="tn-progressbar__fill" id="tn-progressbar-fill"></div>',
       '</div>',
@@ -471,11 +471,13 @@
     const advFresh = !!(adv && Math.abs(Number(adv.cart_total || 0) - total) < 0.01);
     const hasAdminCfg = !!localCfg;
     let result = null;
-    if (!advFresh) {
-      result = hasAdminCfg ? { pct: 0, message: '', color: '' } : renderDefault(total);
-    } else {
-      result = renderDefault(total);
+    if (!hasAdminCfg && !advFresh) {
+      fill.style.width = '0%';
+      fill.style.background = '';
+      text.innerHTML = '&nbsp;';
+      return;
     }
+    result = renderDefault(total);
     const regaloResult = advFresh ? buildRegaloResult(adv.regalo) : null;
     const cuotasResult = (advFresh && adv.cuotas) ? buildCuotasResult(adv.cuotas) : buildLocalCuotasResult(total, localCfg);
     const envioResult = (advFresh && adv.envio) ? buildEnvioResult(adv.envio) : buildLocalEnvioResult(total, localCfg);
@@ -488,9 +490,7 @@
     } else {
       fill.style.background = '';
     }
-    if (result.message) {
-      text.innerHTML = result.message;
-    }
+    text.innerHTML = result.message || '&nbsp;';
   }
 
   function buildCartSnapshot(cart, forcedTotalAmount) {
@@ -636,7 +636,8 @@
 
     try {
       const now = Date.now();
-      if (now - state.lastConfigFetchAt < 5000) return;
+      const minInterval = state.liveConfig ? 5000 : 1000;
+      if (now - state.lastConfigFetchAt < minInterval) return;
       state.lastConfigFetchAt = now;
       const ts = Date.now();
       const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${ts}`, { cache: 'no-store' });
@@ -717,8 +718,10 @@
       render(snapshot.total_amount, snapshot);
       scheduleEvaluate(snapshot);
     }).catch(function () {});
-  }, 5000);
+  }, 1000);
 })();
+
+
 
 
 
