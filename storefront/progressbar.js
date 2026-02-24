@@ -328,10 +328,18 @@
     const text = document.getElementById('tn-progressbar-text');
     if (!fill || !text) return;
 
-    const total = Number(totalAmount || 0);
-    let result = renderDefault(total);
-
     const adv = state.advanced;
+    const total = Number(totalAmount || 0);
+    let result = null;
+    if (!adv) {
+      result = {
+        pct: 4,
+        message: 'Actualizando beneficios...',
+        color: '#2563eb',
+      };
+    } else {
+      result = renderDefault(total);
+    }
     const regaloResult = adv ? buildRegaloResult(adv.regalo) : null;
     const cuotasResult = adv ? buildCuotasResult(adv.cuotas) : null;
     const envioResult = adv ? buildEnvioResult(adv.envio) : null;
@@ -391,7 +399,7 @@
       items: cartSnapshot.items.map((i) => [i.product_id, i.quantity, i.line_total]),
     });
 
-    if (state.lastSignature === signature && now - state.lastEvalAt < 1200) return;
+    if (state.lastSignature === signature && now - state.lastEvalAt < 250) return;
 
     state.lastSignature = signature;
     state.lastEvalAt = now;
@@ -425,7 +433,7 @@
     state.evalTimer = setTimeout(function () {
       state.evalTimer = null;
       evaluateAdvanced(cartSnapshot).catch(function () {});
-    }, 350);
+    }, 120);
   }
 
   function scheduleRenderFromDom(shouldEvaluate) {
@@ -520,7 +528,7 @@
       }
       loadConfig().catch(function () {});
       scheduleEvaluate(snapshot);
-    }, 2500);
+    }, 1200);
   });
 })();
 

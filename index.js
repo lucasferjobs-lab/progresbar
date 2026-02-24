@@ -435,7 +435,33 @@ async function evaluateAdvancedGoals(storeId, payload) {
     if (!enabled || threshold <= 0) return null;
 
     let eligibleSubtotal = 0;
-    let hasMatch = scope === 'all';
+    let hasMatch = scope === 'all' ? norm.total_amount > 0 : false;
+
+    // For global rules, use the normalized cart total directly. This avoids
+    // stale line-item payloads from theme-side cart objects.
+    if (scope === 'all') {
+      eligibleSubtotal = Math.max(0, Number(norm.total_amount || 0));
+      const missingAll = Math.max(0, threshold - eligibleSubtotal);
+      return {
+        enabled: true,
+        has_match: hasMatch,
+        scope,
+        threshold_amount: threshold,
+        eligible_subtotal: eligibleSubtotal,
+        missing_amount: missingAll,
+        reached: hasMatch && missingAll <= 0,
+        progress: threshold > 0 ? Math.max(0, Math.min(1, eligibleSubtotal / threshold)) : 0,
+        target: {
+          category_id: categoryId || null,
+          product_id: productId || null,
+        },
+        bar_color: barColor || null,
+        text: text || null,
+        text_prefix: textPrefix || null,
+        text_suffix: textSuffix || null,
+        text_reached: textReached || null,
+      };
+    }
 
     for (const item of norm.items) {
       // eslint-disable-next-line no-await-in-loop
@@ -572,16 +598,7 @@ function buildEvaluateCacheKey(storeId, payload) {
 }
 
 async function evaluateAdvancedGoalsCached(storeId, payload) {
-  const key = buildEvaluateCacheKey(storeId, payload);
-  const now = Date.now();
-  const cached = evaluateGoalsCache.get(key);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-
-  const value = await evaluateAdvancedGoals(storeId, payload);
-  evaluateGoalsCache.set(key, { value, expiresAt: now + 4000 });
-  return value;
+  return evaluateAdvancedGoals(storeId, payload);
 }
 
 app.get('/instalacion', async (req, res) => {
@@ -1339,6 +1356,7 @@ app.post('/admin/save', async (req, res) => {
       ]
     );
 
+    evaluateGoalsCache.clear();
     return res.redirect(302, `/admin?store_id=${storeId}`);
   } catch (error) {
     console.error('[admin/save] failed:', error.message);
