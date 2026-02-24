@@ -1,7 +1,7 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-10';
+  const APP_VERSION = '2026-02-23-11';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
@@ -63,6 +63,7 @@
     liveConfig: null,
     lastConfigFetchAt: 0,
     lastStoreIdSynced: null,
+    configReady: false,
   };
   try {
     const cachedCfg = window.localStorage ? window.localStorage.getItem(getConfigCacheKey()) : null;
@@ -181,23 +182,17 @@
   }
 
   function isCartEmpty(cartSnapshot) {
-    const visibleItems = countVisibleCartItems();
-    if (visibleItems > 0) return false;
+    const domSubtotal = getSubtotalAmount();
+    if (domSubtotal != null && domSubtotal > 0) return false;
 
     const hasSnapshotItems = !!(cartSnapshot && Array.isArray(cartSnapshot.items) && cartSnapshot.items.length > 0);
     const snapshotTotal = Number((cartSnapshot && cartSnapshot.total_amount) || 0);
     if (hasSnapshotItems || snapshotTotal > 0) return false;
 
-    const domSubtotal = getSubtotalAmount();
-    if (domSubtotal != null) {
-      if (domSubtotal > 0) return false;
-      if (domSubtotal === 0 && !hasSnapshotItems) return true;
-    }
-
     const emptyState = document.querySelector('.js-empty-ajax-cart');
     if (emptyState && isVisible(emptyState)) return true;
 
-    return false;
+    return domSubtotal === 0;
   }
 
   function renderDefault(total) {
@@ -478,10 +473,9 @@
     let result = null;
     if (hasAdminCfg) {
       result = regaloResult || cuotasResult || envioResult || { pct: 0, message: '&nbsp;', color: '' };
-    } else if (advFresh) {
-      result = regaloResult || cuotasResult || envioResult || renderDefault(total);
     } else {
-      result = { pct: 0, message: '&nbsp;', color: '' };
+      // Immediate fallback while admin config is still loading.
+      result = renderDefault(total);
     }
 
     fill.style.width = `${Math.max(0, Math.min(100, result.pct))}%`;
@@ -644,6 +638,7 @@
       if (!res.ok) return;
       const data = await res.json();
       state.liveConfig = data || null;
+      state.configReady = !!data;
       if (!requiresRemoteEvaluation(state.liveConfig)) {
         state.advanced = null;
       }
@@ -719,7 +714,18 @@
       scheduleEvaluate(snapshot);
     }).catch(function () {});
   }, 1000);
+
+  // Aggressive bootstrap: until config is ready, retry fast.
+  const bootTimer = setInterval(function () {
+    if (state.configReady) {
+      clearInterval(bootTimer);
+      return;
+    }
+    loadConfig(true).catch(function () {});
+    scheduleRenderFromDom(false);
+  }, 250);
 })();
+
 
 
 
