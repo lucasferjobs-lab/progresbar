@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-06';
+  const APP_VERSION = '2026-02-24-07';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -254,7 +254,8 @@
       if (cached) {
         state.config = JSON.parse(cached);
         state.configLoaded = true;
-        state.freshConfig = false;
+        // Cached config is safe to render (it's already customized); refresh in background.
+        state.freshConfig = true;
       }
     } catch (_) {}
 
@@ -491,7 +492,7 @@
       const text = doc.getElementById('tn-progressbar-text');
       if (!fill || !text) return;
 
-      if (!state.configLoaded || !state.freshConfig) {
+      if (!state.configLoaded) {
         state.barHiddenUntilConfig = true;
         setBarVisible(false);
         return;
@@ -740,9 +741,25 @@
 
     loadConfig(true).catch(function () {});
 
+    // Store id can arrive late (LS boot). Keep trying briefly.
+    (function waitForStoreId() {
+      let tries = 0;
+      const tick = function () {
+        tries += 1;
+        const sid = detectStoreId();
+        if (sid) {
+          loadConfig(true).catch(function () {});
+          scheduleRender();
+          return;
+        }
+        if (tries < 40) setTimeout(tick, 150);
+      };
+      tick();
+    })();
+
     // Gentle retries for cold starts; observers will still keep UI in sync.
     (function retryConfig() {
-      if (state.configLoaded && state.freshConfig) return;
+      if (state.configLoaded) return;
       setTimeout(function () { loadConfig(true).catch(function () {}); }, 300);
       setTimeout(function () { loadConfig(true).catch(function () {}); }, 1000);
       setTimeout(function () { loadConfig(true).catch(function () {}); }, 3000);
