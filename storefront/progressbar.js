@@ -1,7 +1,7 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-3';
+  const APP_VERSION = '2026-02-23-5';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
@@ -30,6 +30,7 @@
     lastSignature: '',
     evalTimer: null,
     liveConfig: null,
+    lastConfigFetchAt: 0,
   };
   const configCacheKey = `tn_progressbar_cfg_${storeId || 'unknown'}`;
   try {
@@ -278,6 +279,38 @@
     };
   }
 
+  function requiresRemoteEvaluation(cfg) {
+    if (!cfg) return true;
+
+    const envioEnabled = cfg.enable_envio_rule !== false;
+    const cuotasEnabled = cfg.enable_cuotas_rule !== false;
+    const regaloEnabled = cfg.enable_regalo_rule !== false;
+
+    const envioScope = String(cfg.envio_scope || 'all');
+    const cuotasScope = String(cfg.cuotas_scope || 'all');
+    const regaloMode = String(cfg.regalo_mode || 'combo_products');
+    const regaloMinAmount = Math.max(0, Number(cfg.regalo_min_amount || cfg.monto_regalo || 0));
+    const regaloPrimary = String(cfg.regalo_primary_product_id || '').trim();
+    const regaloSecondary = String(cfg.regalo_secondary_product_id || '').trim();
+    const regaloTargetQty = Math.max(0, Number(cfg.regalo_target_qty || 0));
+    const regaloTargetProduct = String(cfg.regalo_target_product_id || '').trim();
+    const regaloTargetCategory = String(cfg.regalo_target_category_id || '').trim();
+
+    if (envioEnabled && envioScope !== 'all') return true;
+    if (cuotasEnabled && cuotasScope !== 'all') return true;
+    if (regaloEnabled) {
+      if (regaloMode === 'combo_products') {
+        if (regaloMinAmount > 0 && regaloPrimary && regaloSecondary) return true;
+      } else if (regaloMode === 'target_rule') {
+        if (regaloTargetQty > 0 && (regaloTargetProduct || regaloTargetCategory)) return true;
+      } else {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function buildCuotasResult(cuotas) {
     if (!cuotas || !cuotas.enabled) return null;
     if (!cuotas.has_match && cuotas.scope !== 'all') return null;
@@ -389,19 +422,20 @@
     const adv = state.advanced;
     const localCfg = state.liveConfig;
     const total = Number(totalAmount || 0);
+    const advFresh = !!(adv && Math.abs(Number(adv.cart_total || 0) - total) < 0.01);
     let result = null;
-    if (!adv) {
+    if (!advFresh) {
       result = {
-        pct: 4,
-        message: 'Actualizando beneficios...',
+        pct: 2,
+        message: '',
         color: '#2563eb',
       };
     } else {
       result = renderDefault(total);
     }
-    const regaloResult = adv ? buildRegaloResult(adv.regalo) : null;
-    const cuotasResult = (adv && adv.cuotas) ? buildCuotasResult(adv.cuotas) : buildLocalCuotasResult(total, localCfg);
-    const envioResult = (adv && adv.envio) ? buildEnvioResult(adv.envio) : buildLocalEnvioResult(total, localCfg);
+    const regaloResult = advFresh ? buildRegaloResult(adv.regalo) : null;
+    const cuotasResult = (advFresh && adv.cuotas) ? buildCuotasResult(adv.cuotas) : buildLocalCuotasResult(total, localCfg);
+    const envioResult = (advFresh && adv.envio) ? buildEnvioResult(adv.envio) : buildLocalEnvioResult(total, localCfg);
 
     result = regaloResult || cuotasResult || envioResult || result;
 
@@ -411,7 +445,9 @@
     } else {
       fill.style.background = '';
     }
-    text.innerHTML = result.message;
+    if (result.message) {
+      text.innerHTML = result.message;
+    }
   }
 
   function buildCartSnapshot(cart, forcedTotalAmount) {
@@ -451,6 +487,10 @@
 
   async function evaluateAdvanced(cartSnapshot) {
     if (!storeId) return;
+    if (!requiresRemoteEvaluation(state.liveConfig)) {
+      state.advanced = null;
+      return;
+    }
 
     const now = Date.now();
     const signature = JSON.stringify({
@@ -458,7 +498,7 @@
       items: cartSnapshot.items.map((i) => [i.product_id, i.quantity, i.line_total]),
     });
 
-    if (state.lastSignature === signature && now - state.lastEvalAt < 250) return;
+    if (state.lastSignature === signature && now - state.lastEvalAt < 120) return;
 
     state.lastSignature = signature;
     state.lastEvalAt = now;
@@ -488,11 +528,12 @@
   }
 
   function scheduleEvaluate(cartSnapshot) {
+    if (!requiresRemoteEvaluation(state.liveConfig)) return;
     if (state.evalTimer) clearTimeout(state.evalTimer);
     state.evalTimer = setTimeout(function () {
       state.evalTimer = null;
       evaluateAdvanced(cartSnapshot).catch(function () {});
-    }, 120);
+    }, 60);
   }
 
   function scheduleRenderFromDom(shouldEvaluate) {
@@ -551,11 +592,17 @@
     if (!storeId) return;
 
     try {
+      const now = Date.now();
+      if (now - state.lastConfigFetchAt < 5000) return;
+      state.lastConfigFetchAt = now;
       const ts = Date.now();
       const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${ts}`, { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       state.liveConfig = data || null;
+      if (!requiresRemoteEvaluation(state.liveConfig)) {
+        state.advanced = null;
+      }
       try {
         if (window.localStorage && data) {
           window.localStorage.setItem(configCacheKey, JSON.stringify(data));
@@ -574,6 +621,22 @@
     const snapshot = buildCartSnapshot(cart);
     render(snapshot.total_amount, snapshot);
     scheduleEvaluate(snapshot);
+  });
+
+  document.addEventListener('click', function (event) {
+    const target = event && event.target;
+    if (!target) return;
+    const quantityControl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
+    if (!quantityControl) return;
+    scheduleRenderFromDom();
+  });
+
+  document.addEventListener('input', function (event) {
+    const target = event && event.target;
+    if (!target) return;
+    if (target.classList && target.classList.contains('js-cart-quantity-input')) {
+      scheduleRenderFromDom();
+    }
   });
 
   ensureBarMounted();
@@ -598,9 +661,19 @@
       removeBar();
       return;
     }
-    loadConfig().catch(function () {});
     scheduleEvaluate(snapshot);
-  }, 1200);
+  }, 180);
+
+  setInterval(function () {
+    loadConfig().then(function () {
+      const amount = getSubtotalAmount();
+      const snapshot = buildCartSnapshot(null, amount);
+      render(snapshot.total_amount, snapshot);
+      scheduleEvaluate(snapshot);
+    }).catch(function () {});
+  }, 5000);
 })();
+
+
 
 
