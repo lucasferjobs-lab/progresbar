@@ -1,7 +1,7 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-11';
+  const APP_VERSION = '2026-02-23-12';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
@@ -125,6 +125,15 @@
     return null;
   }
 
+  function getFallbackTotalFromLs() {
+    try {
+      const c = (window.LS && window.LS.cart) || {};
+      const total = toAmount(c.total);
+      if (total != null) return total;
+    } catch (_) {}
+    return null;
+  }
+
   function ensureBarMounted() {
     const existing = document.getElementById('app-barra-progreso');
     if (existing) return existing;
@@ -172,27 +181,23 @@
     return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
   }
 
-  function countVisibleCartItems() {
-    const nodes = document.querySelectorAll('.js-ajax-cart-list .js-cart-item');
-    let count = 0;
-    nodes.forEach(function (n) {
-      if (isVisible(n)) count += 1;
-    });
-    return count;
-  }
-
   function isCartEmpty(cartSnapshot) {
-    const domSubtotal = getSubtotalAmount();
-    if (domSubtotal != null && domSubtotal > 0) return false;
-
-    const hasSnapshotItems = !!(cartSnapshot && Array.isArray(cartSnapshot.items) && cartSnapshot.items.length > 0);
-    const snapshotTotal = Number((cartSnapshot && cartSnapshot.total_amount) || 0);
-    if (hasSnapshotItems || snapshotTotal > 0) return false;
-
+    // Only trust explicit "empty cart" state from Tiendanube UI.
     const emptyState = document.querySelector('.js-empty-ajax-cart');
     if (emptyState && isVisible(emptyState)) return true;
 
-    return domSubtotal === 0;
+    return false;
+  }
+
+  function pulseRefresh(durationMs) {
+    const endAt = Date.now() + durationMs;
+    const tick = function () {
+      scheduleRenderFromDom();
+      if (Date.now() < endAt) {
+        setTimeout(tick, 70);
+      }
+    };
+    tick();
   }
 
   function renderDefault(total) {
@@ -578,12 +583,11 @@
     state.raf = requestAnimationFrame(function () {
       state.raf = null;
       const amount = getSubtotalAmount();
-      if (amount != null) {
-        const snapshot = buildCartSnapshot(null, amount);
-        render(amount, snapshot);
-        if (shouldEvaluate !== false) {
-          scheduleEvaluate(snapshot);
-        }
+      const fallbackAmount = amount != null ? amount : getFallbackTotalFromLs();
+      const snapshot = buildCartSnapshot(null, fallbackAmount);
+      render(snapshot.total_amount, snapshot);
+      if (shouldEvaluate !== false) {
+        scheduleEvaluate(snapshot);
       }
     });
   }
@@ -668,14 +672,14 @@
     if (!target) return;
     const quantityControl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
     if (!quantityControl) return;
-    scheduleRenderFromDom();
+    pulseRefresh(1400);
   });
 
   document.addEventListener('input', function (event) {
     const target = event && event.target;
     if (!target) return;
     if (target.classList && target.classList.contains('js-cart-quantity-input')) {
-      scheduleRenderFromDom();
+      pulseRefresh(1400);
     }
   });
 
@@ -703,6 +707,7 @@
       removeBar();
       return;
     }
+    ensureBarMounted();
     scheduleEvaluate(snapshot);
   }, 180);
 
@@ -725,6 +730,7 @@
     scheduleRenderFromDom(false);
   }, 250);
 })();
+
 
 
 
