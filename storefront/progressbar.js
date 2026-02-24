@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-01';
+  const APP_VERSION = '2026-02-24-02';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -194,6 +194,8 @@
       raf: null,
       subtotalObserver: null,
       observedNode: null,
+      cartObserver: null,
+      observedCartRoot: null,
       domObserver: null,
       lastRendered: null,
       forceLocalUntil: 0,
@@ -244,11 +246,20 @@
       return !!(emptyState && isVisible(emptyState));
     }
 
+    function getCartRoot() {
+      return (
+        doc.getElementById('modal-cart') ||
+        doc.querySelector('[data-component="cart"]') ||
+        doc.querySelector('.js-ajax-cart-panel') ||
+        doc.body
+      );
+    }
+
     function getSubtotalNode() {
       return (
+        doc.querySelector('.js-subtotal-price[data-priceraw]') ||
         doc.querySelector('.js-ajax-cart-total.js-cart-subtotal') ||
         doc.querySelector('[data-component="cart.subtotal"]') ||
-        doc.querySelector('.js-subtotal-price[data-priceraw]') ||
         doc.querySelector('.js-cart-total[data-priceraw]') ||
         null
       );
@@ -573,6 +584,32 @@
       });
     }
 
+    function bindCartObserver() {
+      const root = getCartRoot();
+      if (!root) return;
+      if (state.observedCartRoot === root) return;
+      if (state.cartObserver) state.cartObserver.disconnect();
+      state.observedCartRoot = root;
+      state.cartObserver = new MutationObserver(function (mutations) {
+        for (let i = 0; i < mutations.length; i++) {
+          const m = mutations[i];
+          const t = m && m.target;
+          if (!t || t.nodeType !== 1) continue;
+          // Themes often update totals by mutating data-priceraw on hidden nodes.
+          if (t.getAttribute && t.getAttribute('data-priceraw') != null) {
+            scheduleRender();
+            evaluateRemote();
+            return;
+          }
+        }
+      });
+      state.cartObserver.observe(root, {
+        attributes: true,
+        attributeFilter: ['data-priceraw', 'data-component-value', 'style', 'class'],
+        subtree: true,
+      });
+    }
+
     function bindDomObserver() {
       if (state.domObserver) return;
       state.domObserver = new MutationObserver(function () {
@@ -590,6 +627,7 @@
         }
         ensureBarMounted();
         bindSubtotalObserver();
+        bindCartObserver();
         scheduleRender();
       });
       state.domObserver.observe(doc.body, { childList: true, subtree: true });
@@ -629,6 +667,7 @@
 
     ensureBarMounted();
     bindSubtotalObserver();
+    bindCartObserver();
     bindDomObserver();
     renderNow();
 
