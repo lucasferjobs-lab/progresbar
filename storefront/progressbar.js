@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-02';
+  const APP_VERSION = '2026-02-24-03';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -241,8 +241,27 @@
       return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
     }
 
+    function resolveCartRoot() {
+      const bar = doc.getElementById('app-barra-progreso');
+      if (bar && bar.closest) {
+        const root = bar.closest('#modal-cart,[data-component="cart"],.js-ajax-cart-panel');
+        if (root) return root;
+      }
+      return (
+        doc.getElementById('modal-cart') ||
+        doc.querySelector('[data-component="cart"]') ||
+        doc.querySelector('.js-ajax-cart-panel') ||
+        doc.body
+      );
+    }
+
+    function q(selector) {
+      const root = resolveCartRoot();
+      return (root && root.querySelector) ? root.querySelector(selector) : doc.querySelector(selector);
+    }
+
     function isExplicitEmpty() {
-      const emptyState = doc.querySelector('.js-empty-ajax-cart');
+      const emptyState = q('.js-empty-ajax-cart');
       return !!(emptyState && isVisible(emptyState));
     }
 
@@ -257,10 +276,10 @@
 
     function getSubtotalNode() {
       return (
-        doc.querySelector('.js-subtotal-price[data-priceraw]') ||
-        doc.querySelector('.js-ajax-cart-total.js-cart-subtotal') ||
-        doc.querySelector('[data-component="cart.subtotal"]') ||
-        doc.querySelector('.js-cart-total[data-priceraw]') ||
+        q('.js-subtotal-price[data-priceraw]') ||
+        q('.js-ajax-cart-total.js-cart-subtotal') ||
+        q('[data-component="cart.subtotal"]') ||
+        q('.js-cart-total[data-priceraw]') ||
         null
       );
     }
@@ -307,7 +326,8 @@
         '</div>',
       ].join('');
 
-      const cartList = doc.querySelector('.js-ajax-cart-list');
+      const root = resolveCartRoot();
+      const cartList = root ? root.querySelector('.js-ajax-cart-list') : doc.querySelector('.js-ajax-cart-list');
       if (cartList) {
         const firstItem = cartList.querySelector('.js-cart-item');
         if (firstItem && firstItem.parentNode) {
@@ -318,13 +338,13 @@
         return wrapper;
       }
 
-      const subtotalRow = doc.querySelector('[data-store="cart-subtotal"]');
+      const subtotalRow = root ? root.querySelector('[data-store="cart-subtotal"]') : doc.querySelector('[data-store="cart-subtotal"]');
       if (subtotalRow && subtotalRow.parentNode) {
         subtotalRow.parentNode.insertBefore(wrapper, subtotalRow);
         return wrapper;
       }
 
-      const anchor = getSubtotalNode() || doc.querySelector('.js-cart-item');
+      const anchor = getSubtotalNode() || (root ? root.querySelector('.js-cart-item') : doc.querySelector('.js-cart-item'));
       if (!anchor || !anchor.parentNode) return null;
       anchor.parentNode.insertBefore(wrapper, anchor);
       return wrapper;
@@ -585,7 +605,7 @@
     }
 
     function bindCartObserver() {
-      const root = getCartRoot();
+      const root = resolveCartRoot();
       if (!root) return;
       if (state.observedCartRoot === root) return;
       if (state.cartObserver) state.cartObserver.disconnect();
@@ -606,6 +626,8 @@
       state.cartObserver.observe(root, {
         attributes: true,
         attributeFilter: ['data-priceraw', 'data-component-value', 'style', 'class'],
+        childList: true,
+        characterData: true,
         subtree: true,
       });
     }
