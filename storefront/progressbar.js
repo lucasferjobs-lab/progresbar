@@ -146,19 +146,20 @@
     const visibleItems = countVisibleCartItems();
     if (visibleItems > 0) return false;
 
-    if (cartSnapshot && Array.isArray(cartSnapshot.items) && cartSnapshot.items.length > 0) {
-      return false;
-    }
-
-    if (cartSnapshot && Number(cartSnapshot.total_amount || 0) > 0) return false;
+    const hasSnapshotItems = !!(cartSnapshot && Array.isArray(cartSnapshot.items) && cartSnapshot.items.length > 0);
+    const snapshotTotal = Number((cartSnapshot && cartSnapshot.total_amount) || 0);
+    if (hasSnapshotItems || snapshotTotal > 0) return false;
 
     const domSubtotal = getSubtotalAmount();
-    if (domSubtotal != null && domSubtotal > 0) return false;
+    if (domSubtotal != null) {
+      if (domSubtotal > 0) return false;
+      if (domSubtotal === 0 && !hasSnapshotItems) return true;
+    }
 
     const emptyState = document.querySelector('.js-empty-ajax-cart');
     if (emptyState && isVisible(emptyState)) return true;
 
-    return true;
+    return false;
   }
 
   function renderDefault(total) {
