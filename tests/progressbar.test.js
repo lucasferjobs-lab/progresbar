@@ -73,6 +73,11 @@ test('requiresRemoteEvaluation true for category scope', () => {
   assert.strictEqual(logic.requiresRemoteEvaluation(cfg), true);
 });
 
+test('pickThreshold prefers higher value', () => {
+  assert.strictEqual(logic.pickThreshold('400', 40000), 40000);
+  assert.strictEqual(logic.pickThreshold('40.000', '40000'), 40000);
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }

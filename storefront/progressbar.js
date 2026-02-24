@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-03';
+  const APP_VERSION = '2026-02-24-04';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -46,12 +46,36 @@
     return Number.isFinite(value) ? value : null;
   }
 
+  function parseConfigNumber(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (!s) return null;
+      // Accept "40000", "40000.00", "40.000", "40.000,00"
+      const normalized = s.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+      const n = Number.parseFloat(normalized);
+      return Number.isFinite(n) ? n : null;
+    }
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function pickThreshold(primary, fallback) {
+    const a = parseConfigNumber(primary);
+    const b = parseConfigNumber(fallback);
+    if (a != null && b != null) return Math.max(a, b);
+    if (a != null) return a;
+    if (b != null) return b;
+    return 0;
+  }
+
   function buildLocalEnvioResult(total, cfg) {
     if (!cfg || cfg.enable_envio_rule === false) return null;
     const scope = String(cfg.envio_scope || 'all');
     if (scope !== 'all') return null;
 
-    const threshold = Math.max(0, Number(cfg.envio_min_amount || cfg.monto_envio_gratis || 0));
+    const threshold = Math.max(0, pickThreshold(cfg.envio_min_amount, cfg.monto_envio_gratis));
     if (threshold <= 0) return null;
 
     const missing = Math.max(0, threshold - total);
@@ -82,7 +106,7 @@
     const scope = String(cfg.cuotas_scope || 'all');
     if (scope !== 'all') return null;
 
-    const threshold = Math.max(0, Number(cfg.cuotas_threshold_amount || cfg.monto_cuotas || 0));
+    const threshold = Math.max(0, pickThreshold(cfg.cuotas_threshold_amount, cfg.monto_cuotas));
     if (threshold <= 0) return null;
 
     const missing = Math.max(0, threshold - total);
@@ -711,6 +735,8 @@
     clampPct,
     toAmount,
     parseSubtotalFromText,
+    parseConfigNumber,
+    pickThreshold,
     buildLocalEnvioResult,
     buildLocalCuotasResult,
     renderDefault,
