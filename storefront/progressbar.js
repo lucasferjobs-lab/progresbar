@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-23-15';
+  const APP_VERSION = '2026-02-23-16';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -193,6 +193,7 @@
       observedNode: null,
       domObserver: null,
       lastRendered: null,
+      forceLocalUntil: 0,
     };
 
     function detectStoreId() {
@@ -322,8 +323,13 @@
       const cfg = state.config;
       const localEnvio = buildLocalEnvioResult(total, cfg);
       const localCuotas = buildLocalCuotasResult(total, cfg);
+      const preferLocalOnly = Date.now() < state.forceLocalUntil;
 
-      if (state.lastRemote && Math.abs(Number(state.lastRemote.cart_total || 0) - total) < 0.01) {
+      if (!state.configLoaded) {
+        return state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
+      }
+
+      if (!preferLocalOnly && state.lastRemote && Math.abs(Number(state.lastRemote.cart_total || 0) - total) < 0.01) {
         const remote = state.lastRemote;
         if (remote.regalo && remote.regalo.enabled) {
           const color = String(remote.regalo.bar_color || '#a855f7');
@@ -380,7 +386,7 @@
         }
       }
 
-      return localCuotas || localEnvio || renderDefault(total, cfg);
+      return localEnvio || localCuotas || renderDefault(total, cfg);
     }
 
     function renderNow() {
@@ -513,6 +519,7 @@
 
     function pulseRefresh() {
       const end = Date.now() + 1400;
+      state.forceLocalUntil = Date.now() + 1600;
       const tick = function () {
         scheduleRender();
         evaluateRemote();
@@ -580,3 +587,4 @@
     init,
   };
 });
+
