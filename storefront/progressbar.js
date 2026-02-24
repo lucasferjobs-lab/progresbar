@@ -1,7 +1,7 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-9';
+  const APP_VERSION = '2026-02-23-10';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
@@ -352,7 +352,7 @@
         const cachedCfg = window.localStorage ? window.localStorage.getItem(getConfigCacheKey()) : null;
         if (cachedCfg) state.liveConfig = JSON.parse(cachedCfg);
       } catch (_) {}
-      loadConfig().catch(function () {});
+      loadConfig(true).catch(function () {});
     }
     return detected;
   }
@@ -470,19 +470,19 @@
     const total = Number(totalAmount || 0);
     const advFresh = !!(adv && Math.abs(Number(adv.cart_total || 0) - total) < 0.01);
     const hasAdminCfg = !!localCfg;
-    let result = null;
-    if (!hasAdminCfg && !advFresh) {
-      fill.style.width = '0%';
-      fill.style.background = '';
-      text.innerHTML = '&nbsp;';
-      return;
-    }
-    result = renderDefault(total);
+
     const regaloResult = advFresh ? buildRegaloResult(adv.regalo) : null;
     const cuotasResult = (advFresh && adv.cuotas) ? buildCuotasResult(adv.cuotas) : buildLocalCuotasResult(total, localCfg);
     const envioResult = (advFresh && adv.envio) ? buildEnvioResult(adv.envio) : buildLocalEnvioResult(total, localCfg);
 
-    result = regaloResult || cuotasResult || envioResult || result;
+    let result = null;
+    if (hasAdminCfg) {
+      result = regaloResult || cuotasResult || envioResult || { pct: 0, message: '&nbsp;', color: '' };
+    } else if (advFresh) {
+      result = regaloResult || cuotasResult || envioResult || renderDefault(total);
+    } else {
+      result = { pct: 0, message: '&nbsp;', color: '' };
+    }
 
     fill.style.width = `${Math.max(0, Math.min(100, result.pct))}%`;
     if (result.color) {
@@ -631,13 +631,13 @@
     state.domObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  async function loadConfig() {
+  async function loadConfig(force) {
     if (!ensureStoreContext()) return;
 
     try {
       const now = Date.now();
       const minInterval = state.liveConfig ? 5000 : 1000;
-      if (now - state.lastConfigFetchAt < minInterval) return;
+      if (!force && now - state.lastConfigFetchAt < minInterval) return;
       state.lastConfigFetchAt = now;
       const ts = Date.now();
       const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${ts}`, { cache: 'no-store' });
@@ -692,7 +692,7 @@
   render(initial.total_amount, initial);
   scheduleEvaluate(initial);
 
-  loadConfig().then(function () {
+  loadConfig(true).then(function () {
     const amount = getSubtotalAmount();
     const snapshot = buildCartSnapshot(null, amount);
     render(snapshot.total_amount, snapshot);
@@ -720,6 +720,7 @@
     }).catch(function () {});
   }, 1000);
 })();
+
 
 
 
