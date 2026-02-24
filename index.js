@@ -1426,12 +1426,20 @@ app.get('/api/config/:storeId', async (req, res) => {
   }
 });
 
-app.post('/api/goals/:storeId/evaluate', async (req, res) => {
+app.post('/api/goals/:storeId/evaluate', express.text({ type: 'text/plain' }), async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
 
   try {
-    const result = await evaluateAdvancedGoalsCached(storeId, req.body || {});
+    let payload = req.body;
+    if (typeof payload === 'string') {
+      try {
+        payload = payload ? JSON.parse(payload) : {};
+      } catch {
+        payload = {};
+      }
+    }
+    const result = await evaluateAdvancedGoalsCached(storeId, payload || {});
     return res.status(200).json(result);
   } catch (error) {
     console.error('[api/goals/evaluate] failed:', error.message);

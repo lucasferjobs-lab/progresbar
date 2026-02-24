@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-23-17';
+  const APP_VERSION = '2026-02-24-01';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -185,15 +185,19 @@
     const state = {
       config: null,
       configLoaded: false,
+      freshConfig: false,
       lastConfigFetchAt: 0,
       lastRemote: null,
       evalTimer: null,
+      evalInFlight: null,
+      lastEvalKey: null,
       raf: null,
       subtotalObserver: null,
       observedNode: null,
       domObserver: null,
       lastRendered: null,
       forceLocalUntil: 0,
+      barHiddenUntilConfig: false,
     };
 
     function detectStoreId() {
@@ -224,6 +228,7 @@
       if (cached) {
         state.config = JSON.parse(cached);
         state.configLoaded = true;
+        state.freshConfig = false;
       }
     } catch (_) {}
 
@@ -319,6 +324,12 @@
       if (node && node.parentNode) node.parentNode.removeChild(node);
     }
 
+    function setBarVisible(visible) {
+      const node = doc.getElementById('app-barra-progreso');
+      if (!node) return;
+      node.style.display = visible ? '' : 'none';
+    }
+
     function buildUiResult(total) {
       const cfg = state.config;
       const localEnvio = buildLocalEnvioResult(total, cfg);
@@ -326,6 +337,7 @@
       const preferLocalOnly = Date.now() < state.forceLocalUntil;
 
       if (!state.configLoaded) {
+        // Don't show defaults while config is still loading.
         return state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
       }
 
@@ -388,7 +400,7 @@
 
       // If admin config exists, never fall back to default copy/colors.
       if (state.configLoaded) {
-        return localEnvio || localCuotas || state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
+        return localEnvio || localCuotas || null;
       }
 
       return renderDefault(total, cfg);
@@ -397,6 +409,15 @@
     function renderNow() {
       if (isExplicitEmpty()) {
         removeBar();
+        state.barHiddenUntilConfig = false;
+        if (state.evalTimer) {
+          try { clearTimeout(state.evalTimer); } catch (_) {}
+          state.evalTimer = null;
+        }
+        if (state.evalInFlight) {
+          try { state.evalInFlight.abort(); } catch (_) {}
+          state.evalInFlight = null;
+        }
         return;
       }
       const wrapper = ensureBarMounted();
@@ -406,8 +427,22 @@
       const text = doc.getElementById('tn-progressbar-text');
       if (!fill || !text) return;
 
+      if (!state.configLoaded || !state.freshConfig) {
+        state.barHiddenUntilConfig = true;
+        setBarVisible(false);
+        return;
+      }
+      if (state.barHiddenUntilConfig) {
+        state.barHiddenUntilConfig = false;
+        setBarVisible(true);
+      }
+
       const total = getCurrentTotal();
       const result = buildUiResult(total);
+      if (!result) {
+        removeBar();
+        return;
+      }
 
       fill.style.width = `${clampPct(result.pct)}%`;
       fill.style.background = result.color || '#2563eb';
@@ -440,26 +475,51 @@
       return { total_amount: Number(total || 0), items };
     }
 
+    function buildEvalKey(snapshot) {
+      // Stable-ish key: avoid spamming server when nothing relevant changed.
+      const total = Number(snapshot && snapshot.total_amount) || 0;
+      const items = Array.isArray(snapshot && snapshot.items) ? snapshot.items : [];
+      const parts = [String(total.toFixed(2)), String(items.length)];
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i] || {};
+        parts.push(String(it.product_id || ''));
+        parts.push(String(it.quantity || 0));
+        parts.push(String(Number(it.line_total || 0).toFixed(2)));
+      }
+      return parts.join('|');
+    }
+
     async function evaluateRemote() {
       if (!detectStoreId()) return;
+      if (isExplicitEmpty()) return;
       if (!requiresRemoteEvaluation(state.config)) {
         state.lastRemote = null;
         return;
       }
 
       const snapshot = buildSnapshot();
+      const evalKey = buildEvalKey(snapshot);
+      if (state.lastEvalKey === evalKey && state.evalInFlight) return;
+      state.lastEvalKey = evalKey;
+
       if (state.evalTimer) clearTimeout(state.evalTimer);
       state.evalTimer = setTimeout(async function () {
         try {
+          if (state.evalInFlight) {
+            try { state.evalInFlight.abort(); } catch (_) {}
+          }
           const controller = new AbortController();
+          state.evalInFlight = controller;
           const abortTimer = setTimeout(function () { controller.abort(); }, 1200);
           const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            // Avoid CORS preflight: application/json triggers OPTIONS.
+            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
             body: JSON.stringify(snapshot),
             signal: controller.signal,
           });
           clearTimeout(abortTimer);
+          if (state.evalInFlight === controller) state.evalInFlight = null;
           if (!res.ok) return;
           const data = await res.json();
           state.lastRemote = data;
@@ -481,6 +541,7 @@
         const data = await res.json();
         state.config = data || null;
         state.configLoaded = !!data;
+        state.freshConfig = !!data;
         try {
           if (win.localStorage && data) {
             win.localStorage.setItem(getCacheKey(), JSON.stringify(data));
@@ -515,6 +576,18 @@
     function bindDomObserver() {
       if (state.domObserver) return;
       state.domObserver = new MutationObserver(function () {
+        if (isExplicitEmpty()) {
+          removeBar();
+          if (state.evalTimer) {
+            try { clearTimeout(state.evalTimer); } catch (_) {}
+            state.evalTimer = null;
+          }
+          if (state.evalInFlight) {
+            try { state.evalInFlight.abort(); } catch (_) {}
+            state.evalInFlight = null;
+          }
+          return;
+        }
         ensureBarMounted();
         bindSubtotalObserver();
         scheduleRender();
@@ -561,23 +634,15 @@
 
     loadConfig(true).catch(function () {});
 
-    const fastBoot = setInterval(function () {
-      if (state.configLoaded) {
-        clearInterval(fastBoot);
-        return;
-      }
-      loadConfig(true).catch(function () {});
-      scheduleRender();
-    }, 250);
+    // Gentle retries for cold starts; observers will still keep UI in sync.
+    (function retryConfig() {
+      if (state.configLoaded && state.freshConfig) return;
+      setTimeout(function () { loadConfig(true).catch(function () {}); }, 300);
+      setTimeout(function () { loadConfig(true).catch(function () {}); }, 1000);
+      setTimeout(function () { loadConfig(true).catch(function () {}); }, 3000);
+    })();
 
-    setInterval(function () {
-      scheduleRender();
-      evaluateRemote();
-    }, 180);
-
-    setInterval(function () {
-      loadConfig(false).catch(function () {});
-    }, 2000);
+    // No aggressive polling. Cart DOM observers + explicit events drive updates.
   }
 
   return {
