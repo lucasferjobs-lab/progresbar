@@ -1349,6 +1349,9 @@ app.post('/admin/save', async (req, res) => {
 app.get('/api/config/:storeId', async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
 
   try {
     await ensureGoalSettingsTable();

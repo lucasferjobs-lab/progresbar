@@ -463,7 +463,8 @@
     if (!storeId) return;
 
     try {
-      const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}`, { cache: 'no-store' });
+      const ts = Date.now();
+      const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${ts}`, { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       if (data && data.monto_envio_gratis != null) config.envioGratis = Number(data.monto_envio_gratis);
