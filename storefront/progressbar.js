@@ -1,7 +1,7 @@
 ﻿(function () {
   if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
   window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-2';
+  const APP_VERSION = '2026-02-23-3';
   window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
 
   const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
@@ -29,7 +29,13 @@
     lastEvalAt: 0,
     lastSignature: '',
     evalTimer: null,
+    liveConfig: null,
   };
+  const configCacheKey = `tn_progressbar_cfg_${storeId || 'unknown'}`;
+  try {
+    const cachedCfg = window.localStorage ? window.localStorage.getItem(configCacheKey) : null;
+    if (cachedCfg) state.liveConfig = JSON.parse(cachedCfg);
+  } catch (_) {}
 
   function money(n) {
     return Number(n || 0).toLocaleString('es-AR');
@@ -220,6 +226,58 @@
     };
   }
 
+  function buildLocalEnvioResult(total, cfg) {
+    if (!cfg || cfg.enable_envio_rule === false) return null;
+    const scope = String(cfg.envio_scope || 'all');
+    if (scope !== 'all') return null;
+    const threshold = Math.max(0, Number(cfg.envio_min_amount || cfg.monto_envio_gratis || 0));
+    if (threshold <= 0) return null;
+    const missing = Math.max(0, threshold - total);
+    const reached = missing <= 0;
+    const color = String(cfg.envio_bar_color || '#2563eb');
+    if (reached) {
+      return {
+        pct: 100,
+        message: String(cfg.envio_text_reached || '<span class="tn-progressbar__ok">Envio gratis activado.</span>'),
+        color,
+      };
+    }
+    const prefix = String(cfg.envio_text_prefix || '').trim();
+    const suffix = String(cfg.envio_text_suffix || '').trim();
+    const msg = `${prefix || 'Te faltan'} <strong>$${money(missing)}</strong> ${suffix || 'para envio gratis.'}`.trim();
+    return {
+      pct: Math.max(0, Math.min(100, (total / threshold) * 100)),
+      message: msg,
+      color,
+    };
+  }
+
+  function buildLocalCuotasResult(total, cfg) {
+    if (!cfg || cfg.enable_cuotas_rule === false) return null;
+    const scope = String(cfg.cuotas_scope || 'all');
+    if (scope !== 'all') return null;
+    const threshold = Math.max(0, Number(cfg.cuotas_threshold_amount || cfg.monto_cuotas || 0));
+    if (threshold <= 0) return null;
+    const missing = Math.max(0, threshold - total);
+    const reached = missing <= 0;
+    const color = String(cfg.cuotas_bar_color || '#0ea5e9');
+    if (reached) {
+      return {
+        pct: 100,
+        message: String(cfg.cuotas_text_reached || '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>'),
+        color,
+      };
+    }
+    const prefix = String(cfg.cuotas_text_prefix || '').trim();
+    const suffix = String(cfg.cuotas_text_suffix || '').trim();
+    const msg = `${prefix || 'Te faltan'} <strong>$${money(missing)}</strong> ${suffix || 'para cuotas sin interes.'}`.trim();
+    return {
+      pct: Math.max(0, Math.min(100, (total / threshold) * 100)),
+      message: msg,
+      color,
+    };
+  }
+
   function buildCuotasResult(cuotas) {
     if (!cuotas || !cuotas.enabled) return null;
     if (!cuotas.has_match && cuotas.scope !== 'all') return null;
@@ -329,6 +387,7 @@
     if (!fill || !text) return;
 
     const adv = state.advanced;
+    const localCfg = state.liveConfig;
     const total = Number(totalAmount || 0);
     let result = null;
     if (!adv) {
@@ -341,8 +400,8 @@
       result = renderDefault(total);
     }
     const regaloResult = adv ? buildRegaloResult(adv.regalo) : null;
-    const cuotasResult = adv ? buildCuotasResult(adv.cuotas) : null;
-    const envioResult = adv ? buildEnvioResult(adv.envio) : null;
+    const cuotasResult = (adv && adv.cuotas) ? buildCuotasResult(adv.cuotas) : buildLocalCuotasResult(total, localCfg);
+    const envioResult = (adv && adv.envio) ? buildEnvioResult(adv.envio) : buildLocalEnvioResult(total, localCfg);
 
     result = regaloResult || cuotasResult || envioResult || result;
 
@@ -496,6 +555,12 @@
       const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${ts}`, { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
+      state.liveConfig = data || null;
+      try {
+        if (window.localStorage && data) {
+          window.localStorage.setItem(configCacheKey, JSON.stringify(data));
+        }
+      } catch (_) {}
       if (data && data.monto_envio_gratis != null) config.envioGratis = Number(data.monto_envio_gratis);
       if (data && data.monto_cuotas != null) config.cuotasSinInteres = Number(data.monto_cuotas);
       if (data && data.monto_regalo != null) config.regaloMisterioso = Number(data.monto_regalo);
@@ -511,24 +576,31 @@
     scheduleEvaluate(snapshot);
   });
 
-  loadConfig().finally(function () {
-    ensureBarMounted();
-    bindSubtotalObserver();
-    bindDomObserver();
-    const initial = buildCartSnapshot();
-    render(initial.total_amount, initial);
-    scheduleEvaluate(initial);
-    setInterval(function () {
-      scheduleRenderFromDom(false);
-      const amount = getSubtotalAmount();
-      const snapshot = buildCartSnapshot(null, amount);
-      if (isCartEmpty(snapshot)) {
-        removeBar();
-        return;
-      }
-      loadConfig().catch(function () {});
-      scheduleEvaluate(snapshot);
-    }, 1200);
-  });
+  ensureBarMounted();
+  bindSubtotalObserver();
+  bindDomObserver();
+  const initial = buildCartSnapshot();
+  render(initial.total_amount, initial);
+  scheduleEvaluate(initial);
+
+  loadConfig().then(function () {
+    const amount = getSubtotalAmount();
+    const snapshot = buildCartSnapshot(null, amount);
+    render(snapshot.total_amount, snapshot);
+    scheduleEvaluate(snapshot);
+  }).catch(function () {});
+
+  setInterval(function () {
+    scheduleRenderFromDom(false);
+    const amount = getSubtotalAmount();
+    const snapshot = buildCartSnapshot(null, amount);
+    if (isCartEmpty(snapshot)) {
+      removeBar();
+      return;
+    }
+    loadConfig().catch(function () {});
+    scheduleEvaluate(snapshot);
+  }, 1200);
 })();
+
 
