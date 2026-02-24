@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-23-16';
+  const APP_VERSION = '2026-02-23-17';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -386,7 +386,12 @@
         }
       }
 
-      return localEnvio || localCuotas || renderDefault(total, cfg);
+      // If admin config exists, never fall back to default copy/colors.
+      if (state.configLoaded) {
+        return localEnvio || localCuotas || state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
+      }
+
+      return renderDefault(total, cfg);
     }
 
     function renderNow() {
@@ -587,4 +592,5 @@
     init,
   };
 });
+
 
