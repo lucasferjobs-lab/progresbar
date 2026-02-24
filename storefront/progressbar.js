@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-04';
+  const APP_VERSION = '2026-02-24-06';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -284,9 +284,17 @@
       return (root && root.querySelector) ? root.querySelector(selector) : doc.querySelector(selector);
     }
 
+    function hasCartItems() {
+      const root = resolveCartRoot();
+      const node = (root && root.querySelector) ? root.querySelector('.js-cart-item') : doc.querySelector('.js-cart-item');
+      return !!node;
+    }
+
     function isExplicitEmpty() {
       const emptyState = q('.js-empty-ajax-cart');
-      return !!(emptyState && isVisible(emptyState));
+      // Some themes temporarily flip empty-state visibility during ajax rerenders.
+      // Only consider empty when the empty block is visible AND there are no cart items.
+      return !!(emptyState && isVisible(emptyState) && !hasCartItems());
     }
 
     function getCartRoot() {
@@ -333,7 +341,7 @@
       if (fromDom != null) return Number(fromDom);
       const fromLs = getLsTotal();
       if (fromLs != null) return Number(fromLs);
-      return 0;
+      return null;
     }
 
     function ensureBarMounted() {
@@ -463,7 +471,8 @@
 
     function renderNow() {
       if (isExplicitEmpty()) {
-        removeBar();
+        // Keep DOM node to avoid flicker; just hide it.
+        setBarVisible(false);
         state.barHiddenUntilConfig = false;
         if (state.evalTimer) {
           try { clearTimeout(state.evalTimer); } catch (_) {}
@@ -493,14 +502,26 @@
       }
 
       const total = getCurrentTotal();
+      if (total == null) {
+        // During cart ajax rerenders, totals can disappear momentarily.
+        // Keep the last rendered state instead of flashing/hiding.
+        if (state.lastRendered) {
+          fill.style.width = `${clampPct(state.lastRendered.pct)}%`;
+          fill.style.background = state.lastRendered.color || '#2563eb';
+          text.innerHTML = state.lastRendered.message || '&nbsp;';
+        }
+        return;
+      }
+
       const result = buildUiResult(total);
       if (!result) {
-        removeBar();
+        setBarVisible(false);
         return;
       }
 
       fill.style.width = `${clampPct(result.pct)}%`;
-      fill.style.background = result.color || '#2563eb';
+      fill.style.backgroundImage = 'none';
+      fill.style.backgroundColor = result.color || '#2563eb';
       text.innerHTML = result.message || '&nbsp;';
       state.lastRendered = result;
     }
@@ -660,7 +681,7 @@
       if (state.domObserver) return;
       state.domObserver = new MutationObserver(function () {
         if (isExplicitEmpty()) {
-          removeBar();
+          setBarVisible(false);
           if (state.evalTimer) {
             try { clearTimeout(state.evalTimer); } catch (_) {}
             state.evalTimer = null;
