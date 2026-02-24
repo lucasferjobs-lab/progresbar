@@ -1,75 +1,21 @@
-﻿(function () {
-  if (window.__TN_PROGRESSBAR_APP_LOADED__) return;
-  window.__TN_PROGRESSBAR_APP_LOADED__ = true;
-  const APP_VERSION = '2026-02-23-13';
-  window.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
-
-  const scriptNode = document.currentScript || document.querySelector('script[data-tn-progressbar="1"]');
-  const scriptSrc = (scriptNode && scriptNode.src) || '';
-  const srcUrl = scriptSrc ? new URL(scriptSrc) : null;
-  const baseUrl = srcUrl ? srcUrl.origin : window.location.origin;
-  let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
-  if (window.console && typeof window.console.info === 'function') {
-    window.console.info('[ProgressBar] app version:', APP_VERSION, 'store:', storeId || 'unknown');
+﻿(function (root, factory) {
+  if (typeof module === 'object' && module.exports) {
+    module.exports = factory();
+    return;
   }
-
-  function detectStoreId() {
-    if (storeId) return storeId;
-    try {
-      const fromLs = window.LS && window.LS.store && (window.LS.store.id || window.LS.store.store_id);
-      if (fromLs) {
-        storeId = String(fromLs);
-        return storeId;
-      }
-    } catch (_) {}
-    try {
-      const fromGlobal = window.Store && (window.Store.id || window.Store.store_id);
-      if (fromGlobal) {
-        storeId = String(fromGlobal);
-        return storeId;
-      }
-    } catch (_) {}
-    try {
-      const hidden = document.querySelector('[name="store_id"], #store_id, [data-store-id]');
-      const v = hidden ? (hidden.value || hidden.getAttribute('data-store-id')) : null;
-      if (v) {
-        storeId = String(v);
-        return storeId;
-      }
-    } catch (_) {}
-    return null;
+  const api = factory();
+  if (root) {
+    root.__TN_PROGRESSBAR_HELPERS__ = api;
+    api.init(root);
   }
+})(typeof window !== 'undefined' ? window : globalThis, function () {
+  const APP_VERSION = '2026-02-23-15';
 
-  function getConfigCacheKey() {
-    return `tn_progressbar_cfg_${detectStoreId() || 'unknown'}`;
+  function clampPct(pct) {
+    const n = Number(pct || 0);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, n));
   }
-
-  const config = {
-    envioGratis: 50000,
-    cuotasSinInteres: 80000,
-    regaloMisterioso: 100000,
-  };
-
-  const state = {
-    observedSubtotalNode: null,
-    subtotalObserver: null,
-    domObserver: null,
-    raf: null,
-    advanced: null,
-    evalSeq: 0,
-    lastEvalAt: 0,
-    lastSignature: '',
-    evalTimer: null,
-    liveConfig: null,
-    lastConfigFetchAt: 0,
-    lastStoreIdSynced: null,
-    configReady: false,
-    lastRender: null,
-  };
-  try {
-    const cachedCfg = window.localStorage ? window.localStorage.getItem(getConfigCacheKey()) : null;
-    if (cachedCfg) state.liveConfig = JSON.parse(cachedCfg);
-  } catch (_) {}
 
   function money(n) {
     return Number(n || 0).toLocaleString('es-AR');
@@ -77,7 +23,6 @@
 
   function toAmount(raw) {
     if (raw == null || raw === '') return null;
-
     if (typeof raw === 'string') {
       const hasDecimalSeparator = raw.includes('.') || raw.includes(',');
       const normalized = raw.replace(/\./g, '').replace(',', '.');
@@ -87,19 +32,10 @@
       if (Number.isInteger(n)) return n / 100;
       return n;
     }
-
     const n = Number(raw);
     if (!Number.isFinite(n)) return null;
     if (Number.isInteger(n)) return n / 100;
     return n;
-  }
-
-  function getSubtotalNode() {
-    return (
-      document.querySelector('.js-ajax-cart-total.js-cart-subtotal') ||
-      document.querySelector('[data-component="cart.subtotal"]') ||
-      null
-    );
   }
 
   function parseSubtotalFromText(text) {
@@ -110,170 +46,18 @@
     return Number.isFinite(value) ? value : null;
   }
 
-  function getSubtotalAmount() {
-    const node = getSubtotalNode();
-    if (!node) return null;
-
-    const rawCents = node.getAttribute('data-priceraw');
-    if (rawCents != null && rawCents !== '') {
-      const cents = Number(rawCents);
-      if (Number.isFinite(cents)) return cents / 100;
-    }
-
-    const textValue = parseSubtotalFromText(node.textContent || '');
-    if (textValue != null) return textValue;
-
-    return null;
-  }
-
-  function getFallbackTotalFromLs() {
-    try {
-      const c = (window.LS && window.LS.cart) || {};
-      const total = toAmount(c.total);
-      if (total != null) return total;
-    } catch (_) {}
-    return null;
-  }
-
-  function ensureBarMounted() {
-    const existing = document.getElementById('app-barra-progreso');
-    if (existing) return existing;
-
-    const wrapper = document.createElement('div');
-    wrapper.id = 'app-barra-progreso';
-    wrapper.className = 'tn-progressbar';
-    wrapper.innerHTML = [
-      '<div class="tn-progressbar__text" id="tn-progressbar-text">&nbsp;</div>',
-      '<div class="tn-progressbar__track">',
-      '  <div class="tn-progressbar__fill" id="tn-progressbar-fill"></div>',
-      '</div>',
-    ].join('');
-
-    const cartList = document.querySelector('.js-ajax-cart-list');
-    if (cartList) {
-      const firstItem = cartList.querySelector('.js-cart-item');
-      if (firstItem && firstItem.parentNode) {
-        firstItem.parentNode.insertBefore(wrapper, firstItem);
-        return wrapper;
-      }
-      cartList.prepend(wrapper);
-      return wrapper;
-    }
-
-    const fallbackAnchor = getSubtotalNode() || document.querySelector('.js-cart-item');
-    if (!fallbackAnchor || !fallbackAnchor.parentNode) return null;
-    fallbackAnchor.parentNode.insertBefore(wrapper, fallbackAnchor);
-    return wrapper;
-  }
-
-  function removeBar() {
-    const existing = document.getElementById('app-barra-progreso');
-    if (existing && existing.parentNode) {
-      existing.parentNode.removeChild(existing);
-    }
-  }
-
-  function isVisible(el) {
-    if (!el) return false;
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) {
-      return false;
-    }
-    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
-  }
-
-  function isCartEmpty(cartSnapshot) {
-    const domSubtotal = getSubtotalAmount();
-    if (domSubtotal != null && domSubtotal > 0) return false;
-
-    const snapshotTotal = Number((cartSnapshot && cartSnapshot.total_amount) || 0);
-    if (snapshotTotal > 0) return false;
-
-    // Trust explicit empty state only when totals are zero.
-    const emptyState = document.querySelector('.js-empty-ajax-cart');
-    if (emptyState && isVisible(emptyState)) return true;
-
-    return false;
-  }
-
-  function pulseRefresh(durationMs) {
-    const endAt = Date.now() + durationMs;
-    const tick = function () {
-      scheduleRenderFromDom();
-      if (Date.now() < endAt) {
-        setTimeout(tick, 70);
-      }
-    };
-    tick();
-  }
-
-  function renderDefault(total) {
-    let pct = 0;
-    let message = '';
-
-    if (total < config.envioGratis) {
-      pct = (total / config.envioGratis) * 100;
-      const faltan = config.envioGratis - total;
-      message = `Te faltan <strong>$${money(faltan)}</strong> para envio gratis`;
-    } else if (total < config.regaloMisterioso) {
-      pct = (total / config.regaloMisterioso) * 100;
-      const faltan = config.regaloMisterioso - total;
-      message = `<span class="tn-progressbar__ok">Envio gratis activado</span>. Te faltan <strong>$${money(faltan)}</strong> para un regalo`;
-    } else {
-      pct = 100;
-      message = '<span class="tn-progressbar__ok">Felicitaciones, ya tenes todos los beneficios.</span>';
-    }
-
-    return { pct, message, color: '#2563eb' };
-  }
-
-  function applyTemplate(template, vars) {
-    if (!template) return '';
-    return String(template)
-      .replaceAll('{{missing}}', '$' + money(vars.missing || 0))
-      .replaceAll('{{threshold}}', '$' + money(vars.threshold || 0))
-      .replaceAll('{{subtotal}}', '$' + money(vars.subtotal || 0));
-  }
-
-  function buildEnvioResult(envio) {
-    if (!envio || !envio.enabled) return null;
-    if (!envio.has_match && envio.scope !== 'all') return null;
-    if (envio.reached) {
-      const reached = String(envio.text_reached || '').trim();
-      return {
-        pct: 100,
-        message: reached || '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
-        color: envio.bar_color || '#2563eb',
-      };
-    }
-    const prefix = String(envio.text_prefix || '').trim();
-    const suffix = String(envio.text_suffix || '').trim();
-    let custom = '';
-    if (prefix || suffix) {
-      custom = `${prefix || 'Te faltan'} <strong>$${money(envio.missing_amount)}</strong> ${suffix || ''}`.trim();
-    } else {
-      custom = applyTemplate(envio.text, {
-        missing: envio.missing_amount,
-        threshold: envio.threshold_amount,
-        subtotal: envio.eligible_subtotal,
-      });
-    }
-    return {
-      pct: Number(envio.progress || 0) * 100,
-      message: custom || `Te faltan <strong>$${money(envio.missing_amount)}</strong> para envio gratis.`,
-      color: envio.bar_color || '#2563eb',
-    };
-  }
-
   function buildLocalEnvioResult(total, cfg) {
     if (!cfg || cfg.enable_envio_rule === false) return null;
     const scope = String(cfg.envio_scope || 'all');
     if (scope !== 'all') return null;
+
     const threshold = Math.max(0, Number(cfg.envio_min_amount || cfg.monto_envio_gratis || 0));
     if (threshold <= 0) return null;
+
     const missing = Math.max(0, threshold - total);
     const reached = missing <= 0;
     const color = String(cfg.envio_bar_color || '#2563eb');
+
     if (reached) {
       return {
         pct: 100,
@@ -281,11 +65,13 @@
         color,
       };
     }
+
     const prefix = String(cfg.envio_text_prefix || '').trim();
     const suffix = String(cfg.envio_text_suffix || '').trim();
     const msg = `${prefix || 'Te faltan'} <strong>$${money(missing)}</strong> ${suffix || 'para envio gratis.'}`.trim();
+
     return {
-      pct: Math.max(0, Math.min(100, (total / threshold) * 100)),
+      pct: clampPct((total / threshold) * 100),
       message: msg,
       color,
     };
@@ -295,11 +81,14 @@
     if (!cfg || cfg.enable_cuotas_rule === false) return null;
     const scope = String(cfg.cuotas_scope || 'all');
     if (scope !== 'all') return null;
+
     const threshold = Math.max(0, Number(cfg.cuotas_threshold_amount || cfg.monto_cuotas || 0));
     if (threshold <= 0) return null;
+
     const missing = Math.max(0, threshold - total);
     const reached = missing <= 0;
     const color = String(cfg.cuotas_bar_color || '#0ea5e9');
+
     if (reached) {
       return {
         pct: 100,
@@ -307,446 +96,487 @@
         color,
       };
     }
+
     const prefix = String(cfg.cuotas_text_prefix || '').trim();
     const suffix = String(cfg.cuotas_text_suffix || '').trim();
     const msg = `${prefix || 'Te faltan'} <strong>$${money(missing)}</strong> ${suffix || 'para cuotas sin interes.'}`.trim();
+
     return {
-      pct: Math.max(0, Math.min(100, (total / threshold) * 100)),
+      pct: clampPct((total / threshold) * 100),
       message: msg,
       color,
     };
   }
 
-  function requiresRemoteEvaluation(cfg) {
-    if (!cfg) return true;
+  function renderDefault(total, cfg) {
+    const envioGoal = Math.max(0, Number((cfg && (cfg.envio_min_amount || cfg.monto_envio_gratis)) || 50000));
+    const regaloGoal = Math.max(0, Number((cfg && (cfg.regalo_min_amount || cfg.monto_regalo)) || 100000));
 
-    const envioEnabled = cfg.enable_envio_rule !== false;
-    const cuotasEnabled = cfg.enable_cuotas_rule !== false;
-    const regaloEnabled = cfg.enable_regalo_rule !== false;
+    if (envioGoal > 0 && total < envioGoal) {
+      const missing = envioGoal - total;
+      return {
+        pct: clampPct((total / envioGoal) * 100),
+        message: `Te faltan <strong>$${money(missing)}</strong> para envio gratis`,
+        color: '#2563eb',
+      };
+    }
+
+    if (regaloGoal > 0 && total < regaloGoal) {
+      const missing = regaloGoal - total;
+      return {
+        pct: clampPct((total / regaloGoal) * 100),
+        message: `<span class="tn-progressbar__ok">Envio gratis activado</span>. Te faltan <strong>$${money(missing)}</strong> para un regalo`,
+        color: '#2563eb',
+      };
+    }
+
+    return {
+      pct: 100,
+      message: '<span class="tn-progressbar__ok">Felicitaciones, ya tenes todos los beneficios.</span>',
+      color: '#2563eb',
+    };
+  }
+
+  function requiresRemoteEvaluation(cfg) {
+    if (!cfg) return false;
 
     const envioScope = String(cfg.envio_scope || 'all');
     const cuotasScope = String(cfg.cuotas_scope || 'all');
     const regaloMode = String(cfg.regalo_mode || 'combo_products');
-    const regaloMinAmount = Math.max(0, Number(cfg.regalo_min_amount || cfg.monto_regalo || 0));
-    const regaloPrimary = String(cfg.regalo_primary_product_id || '').trim();
-    const regaloSecondary = String(cfg.regalo_secondary_product_id || '').trim();
-    const regaloTargetQty = Math.max(0, Number(cfg.regalo_target_qty || 0));
-    const regaloTargetProduct = String(cfg.regalo_target_product_id || '').trim();
-    const regaloTargetCategory = String(cfg.regalo_target_category_id || '').trim();
 
-    if (envioEnabled && envioScope !== 'all') return true;
-    if (cuotasEnabled && cuotasScope !== 'all') return true;
-    if (regaloEnabled) {
+    if (cfg.enable_envio_rule !== false && envioScope !== 'all') return true;
+    if (cfg.enable_cuotas_rule !== false && cuotasScope !== 'all') return true;
+
+    if (cfg.enable_regalo_rule !== false) {
       if (regaloMode === 'combo_products') {
-        if (regaloMinAmount > 0 && regaloPrimary && regaloSecondary) return true;
-      } else if (regaloMode === 'target_rule') {
-        if (regaloTargetQty > 0 && (regaloTargetProduct || regaloTargetCategory)) return true;
-      } else {
-        return true;
+        const min = Math.max(0, Number(cfg.regalo_min_amount || 0));
+        const p1 = String(cfg.regalo_primary_product_id || '').trim();
+        const p2 = String(cfg.regalo_secondary_product_id || '').trim();
+        if (min > 0 && p1 && p2) return true;
+      }
+      if (regaloMode === 'target_rule') {
+        const qty = Math.max(0, Number(cfg.regalo_target_qty || 0));
+        const p = String(cfg.regalo_target_product_id || '').trim();
+        const c = String(cfg.regalo_target_category_id || '').trim();
+        if (qty > 0 && (p || c)) return true;
       }
     }
 
     return false;
   }
 
-  function ensureStoreContext() {
-    const detected = detectStoreId();
-    if (!detected) return null;
-    if (state.lastStoreIdSynced !== detected) {
-      state.lastStoreIdSynced = detected;
-      state.lastConfigFetchAt = 0;
+  function init(win) {
+    if (!win || !win.document) return;
+    if (win.__TN_PROGRESSBAR_APP_LOADED__) return;
+    win.__TN_PROGRESSBAR_APP_LOADED__ = true;
+    win.__TN_PROGRESSBAR_APP_VERSION__ = APP_VERSION;
+
+    const doc = win.document;
+    const scriptNode = doc.currentScript || doc.querySelector('script[data-tn-progressbar="1"]');
+    const scriptSrc = (scriptNode && scriptNode.src) || '';
+    const srcUrl = scriptSrc ? new URL(scriptSrc) : null;
+    const baseUrl = srcUrl ? srcUrl.origin : win.location.origin;
+    let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
+
+    if (win.console && typeof win.console.info === 'function') {
+      win.console.info('[ProgressBar] app version:', APP_VERSION, 'store:', storeId || 'unknown');
+    }
+
+    const state = {
+      config: null,
+      configLoaded: false,
+      lastConfigFetchAt: 0,
+      lastRemote: null,
+      evalTimer: null,
+      raf: null,
+      subtotalObserver: null,
+      observedNode: null,
+      domObserver: null,
+      lastRendered: null,
+    };
+
+    function detectStoreId() {
+      if (storeId) return storeId;
       try {
-        const cachedCfg = window.localStorage ? window.localStorage.getItem(getConfigCacheKey()) : null;
-        if (cachedCfg) state.liveConfig = JSON.parse(cachedCfg);
-      } catch (_) {}
-      loadConfig(true).catch(function () {});
-    }
-    return detected;
-  }
-
-  function buildCuotasResult(cuotas) {
-    if (!cuotas || !cuotas.enabled) return null;
-    if (!cuotas.has_match && cuotas.scope !== 'all') return null;
-    if (cuotas.reached) {
-      const reached = String(cuotas.text_reached || '').trim();
-      return {
-        pct: 100,
-        message: reached || '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
-        color: cuotas.bar_color || '#0ea5e9',
-      };
-    }
-    const prefix = String(cuotas.text_prefix || '').trim();
-    const suffix = String(cuotas.text_suffix || '').trim();
-    let custom = '';
-    if (prefix || suffix) {
-      custom = `${prefix || 'Te faltan'} <strong>$${money(cuotas.missing_amount)}</strong> ${suffix || ''}`.trim();
-    } else {
-      custom = applyTemplate(cuotas.text, {
-        missing: cuotas.missing_amount,
-        threshold: cuotas.threshold_amount,
-        subtotal: cuotas.eligible_subtotal,
-      });
-    }
-    return {
-      pct: Number(cuotas.progress || 0) * 100,
-      message: custom || `Te faltan <strong>$${money(cuotas.missing_amount)}</strong> para cuotas sin interes.`,
-      color: cuotas.bar_color || '#0ea5e9',
-    };
-  }
-
-  function buildRegaloResult(regalo) {
-    if (!regalo || !regalo.enabled) return null;
-
-    if (regalo.mode === 'combo_products') {
-      if (regalo.reached) {
-        const reached = String(regalo.text_reached || '').trim();
-        return {
-          pct: 100,
-          message: reached || '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
-          color: regalo.bar_color || '#a855f7',
-        };
-      }
-      if (!regalo.combo_matched) {
-        return {
-          pct: 20,
-          message: 'Agrega ambos productos para activar el regalo.',
-          color: regalo.bar_color || '#a855f7',
-        };
-      }
-      const prefix = String(regalo.text_prefix || '').trim();
-      const suffix = String(regalo.text_suffix || '').trim();
-      let custom = '';
-      if (prefix || suffix) {
-        custom = `${prefix || 'Te faltan'} <strong>$${money(regalo.missing_amount)}</strong> ${suffix || ''}`.trim();
-      } else {
-        custom = applyTemplate(regalo.text, {
-          missing: regalo.missing_amount,
-          threshold: regalo.min_amount,
-          subtotal: 0,
-        });
-      }
-      return {
-        pct: Number(regalo.progress || 0) * 100,
-        message: custom || `Te faltan <strong>$${money(regalo.missing_amount)}</strong> para obtener el regalo.`,
-        color: regalo.bar_color || '#a855f7',
-      };
-    }
-
-    if (regalo.reached) {
-      const reached = String(regalo.text_reached || '').trim();
-      return {
-        pct: 100,
-        message: reached || '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>',
-        color: regalo.bar_color || '#a855f7',
-      };
-    }
-    const prefix = String(regalo.text_prefix || '').trim();
-    const suffix = String(regalo.text_suffix || '').trim();
-    let custom = '';
-    if (prefix || suffix) {
-      custom = `${prefix || 'Te faltan'} <strong>$${money(regalo.missing_amount)}</strong> ${suffix || ''}`.trim();
-    } else {
-      custom = applyTemplate(regalo.text, {
-        missing: regalo.missing_amount,
-        threshold: regalo.min_amount,
-        subtotal: 0,
-      });
-    }
-    return {
-      pct: Number(regalo.progress || 0) * 100,
-      message: custom || `Te faltan ${Math.max(0, Number(regalo.missing_qty || 0))} unidades y <strong>$${money(regalo.missing_amount)}</strong> para el regalo.`,
-      color: regalo.bar_color || '#a855f7',
-    };
-  }
-
-  function render(totalAmount, cartSnapshot) {
-    if (isCartEmpty(cartSnapshot)) {
-      removeBar();
-      return;
-    }
-
-    const wrapper = ensureBarMounted();
-    if (!wrapper) return;
-
-    const fill = document.getElementById('tn-progressbar-fill');
-    const text = document.getElementById('tn-progressbar-text');
-    if (!fill || !text) return;
-
-    const adv = state.advanced;
-    const localCfg = state.liveConfig;
-    const total = Number(totalAmount || 0);
-    const advFresh = !!(adv && Math.abs(Number(adv.cart_total || 0) - total) < 0.01);
-    const hasAdminCfg = !!localCfg;
-
-    const regaloResult = advFresh ? buildRegaloResult(adv.regalo) : null;
-    const cuotasResult = (advFresh && adv.cuotas) ? buildCuotasResult(adv.cuotas) : buildLocalCuotasResult(total, localCfg);
-    const envioResult = (advFresh && adv.envio) ? buildEnvioResult(adv.envio) : buildLocalEnvioResult(total, localCfg);
-
-    let result = null;
-    if (hasAdminCfg) {
-      result = regaloResult || cuotasResult || envioResult || state.lastRender || renderDefault(total);
-    } else {
-      // Immediate fallback while admin config is still loading.
-      result = renderDefault(total);
-    }
-
-    fill.style.width = `${Math.max(0, Math.min(100, result.pct))}%`;
-    fill.style.background = result.color || (state.lastRender && state.lastRender.color) || '#2563eb';
-    text.innerHTML = result.message || '&nbsp;';
-    state.lastRender = {
-      pct: Math.max(0, Math.min(100, result.pct)),
-      message: result.message || '&nbsp;',
-      color: result.color || (state.lastRender && state.lastRender.color) || '#2563eb',
-    };
-  }
-
-  function buildCartSnapshot(cart, forcedTotalAmount) {
-    const c = cart || (window.LS && window.LS.cart) || {};
-    const productList = Array.isArray(c.products) ? c.products : (Array.isArray(c.items) ? c.items : []);
-
-    const items = productList.map((item) => {
-      const productId = String(item.product_id || item.id || (item.product && item.product.id) || '').trim();
-      const quantity = Math.max(1, Number(item.quantity || 1));
-
-      const unitPrice = toAmount(item.unit_price || item.price || item.unitPrice || item.base_price);
-      const lineTotalRaw = item.line_total || item.subtotal || item.total || item.line_price;
-      const lineTotal = toAmount(lineTotalRaw) || (unitPrice != null ? unitPrice * quantity : 0);
-
-      const categories = Array.isArray(item.categories)
-        ? item.categories.map((c0) => String((c0 && c0.id) || c0))
-        : [];
-
-      return {
-        product_id: productId,
-        quantity,
-        unit_price: unitPrice != null ? unitPrice : 0,
-        line_total: lineTotal,
-        categories,
-      };
-    }).filter((i) => i.product_id);
-
-    const totalAmount = (forcedTotalAmount != null ? Number(forcedTotalAmount) : null)
-      || getSubtotalAmount()
-      || toAmount(c.total)
-      || items.reduce((acc, i) => acc + Number(i.line_total || 0), 0);
-    return {
-      total_amount: Number(totalAmount || 0),
-      items,
-    };
-  }
-
-  async function evaluateAdvanced(cartSnapshot) {
-    if (!ensureStoreContext()) return;
-    if (!requiresRemoteEvaluation(state.liveConfig)) {
-      state.advanced = null;
-      return;
-    }
-
-    const now = Date.now();
-    const signature = JSON.stringify({
-      total: cartSnapshot.total_amount,
-      items: cartSnapshot.items.map((i) => [i.product_id, i.quantity, i.line_total]),
-    });
-
-    if (state.lastSignature === signature && now - state.lastEvalAt < 120) return;
-
-    state.lastSignature = signature;
-    state.lastEvalAt = now;
-    const seq = ++state.evalSeq;
-
-    let timer = null;
-    try {
-      const controller = new AbortController();
-      timer = setTimeout(function () { controller.abort(); }, 1800);
-      const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cartSnapshot),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (seq !== state.evalSeq) return;
-      state.advanced = data;
-      render(cartSnapshot.total_amount, cartSnapshot);
-    } catch (_) {
-      // Keep default rendering if evaluation endpoint is unavailable.
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }
-
-  function scheduleEvaluate(cartSnapshot) {
-    if (!requiresRemoteEvaluation(state.liveConfig)) return;
-    if (state.evalTimer) clearTimeout(state.evalTimer);
-    state.evalTimer = setTimeout(function () {
-      state.evalTimer = null;
-      evaluateAdvanced(cartSnapshot).catch(function () {});
-    }, 60);
-  }
-
-  function scheduleRenderFromDom(shouldEvaluate) {
-    if (state.raf) cancelAnimationFrame(state.raf);
-    state.raf = requestAnimationFrame(function () {
-      state.raf = null;
-      const amount = getSubtotalAmount();
-      const fallbackAmount = amount != null ? amount : getFallbackTotalFromLs();
-      const snapshot = buildCartSnapshot(null, fallbackAmount);
-      render(snapshot.total_amount, snapshot);
-      if (shouldEvaluate !== false) {
-        scheduleEvaluate(snapshot);
-      }
-    });
-  }
-
-  function bindSubtotalObserver() {
-    const node = getSubtotalNode();
-    if (!node) return;
-    if (state.observedSubtotalNode === node) return;
-
-    if (state.subtotalObserver) {
-      state.subtotalObserver.disconnect();
-      state.subtotalObserver = null;
-    }
-
-    state.observedSubtotalNode = node;
-    state.subtotalObserver = new MutationObserver(function () {
-      scheduleRenderFromDom();
-    });
-
-    state.subtotalObserver.observe(node, {
-      attributes: true,
-      attributeFilter: ['data-priceraw', 'data-component-value'],
-      childList: true,
-      characterData: true,
-      subtree: true,
-    });
-
-    scheduleRenderFromDom();
-  }
-
-  function bindDomObserver() {
-    if (state.domObserver) return;
-    state.domObserver = new MutationObserver(function () {
-      ensureBarMounted();
-      bindSubtotalObserver();
-      scheduleRenderFromDom();
-    });
-
-    state.domObserver.observe(document.body, { childList: true, subtree: true });
-  }
-
-  async function loadConfig(force) {
-    if (!ensureStoreContext()) return;
-
-    try {
-      const now = Date.now();
-      const minInterval = state.liveConfig ? 5000 : 1000;
-      if (!force && now - state.lastConfigFetchAt < minInterval) return;
-      state.lastConfigFetchAt = now;
-      const ts = Date.now();
-      const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${ts}`, { cache: 'no-store' });
-      if (!res.ok) return;
-      const data = await res.json();
-      state.liveConfig = data || null;
-      state.configReady = !!data;
-      if (!requiresRemoteEvaluation(state.liveConfig)) {
-        state.advanced = null;
-      }
-      try {
-        if (window.localStorage && data) {
-          window.localStorage.setItem(getConfigCacheKey(), JSON.stringify(data));
+        const fromLs = win.LS && win.LS.store && (win.LS.store.id || win.LS.store.store_id);
+        if (fromLs) {
+          storeId = String(fromLs);
+          return storeId;
         }
       } catch (_) {}
-      if (data && data.monto_envio_gratis != null) config.envioGratis = Number(data.monto_envio_gratis);
-      if (data && data.monto_cuotas != null) config.cuotasSinInteres = Number(data.monto_cuotas);
-      if (data && data.monto_regalo != null) config.regaloMisterioso = Number(data.monto_regalo);
-    } catch (_) {
-      // Keep defaults.
+      try {
+        const fromGlobal = win.Store && (win.Store.id || win.Store.store_id);
+        if (fromGlobal) {
+          storeId = String(fromGlobal);
+          return storeId;
+        }
+      } catch (_) {}
+      return null;
     }
+
+    function getCacheKey() {
+      return `tn_progressbar_cfg_${detectStoreId() || 'unknown'}`;
+    }
+
+    try {
+      const cached = win.localStorage ? win.localStorage.getItem(getCacheKey()) : null;
+      if (cached) {
+        state.config = JSON.parse(cached);
+        state.configLoaded = true;
+      }
+    } catch (_) {}
+
+    function isVisible(el) {
+      if (!el) return false;
+      const style = win.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) return false;
+      return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    }
+
+    function isExplicitEmpty() {
+      const emptyState = doc.querySelector('.js-empty-ajax-cart');
+      return !!(emptyState && isVisible(emptyState));
+    }
+
+    function getSubtotalNode() {
+      return (
+        doc.querySelector('.js-ajax-cart-total.js-cart-subtotal') ||
+        doc.querySelector('[data-component="cart.subtotal"]') ||
+        doc.querySelector('.js-subtotal-price[data-priceraw]') ||
+        doc.querySelector('.js-cart-total[data-priceraw]') ||
+        null
+      );
+    }
+
+    function getSubtotalAmount() {
+      const node = getSubtotalNode();
+      if (!node) return null;
+      const raw = node.getAttribute('data-priceraw');
+      if (raw != null && raw !== '') {
+        const cents = Number(raw);
+        if (Number.isFinite(cents)) return cents / 100;
+      }
+      return parseSubtotalFromText(node.textContent || '');
+    }
+
+    function getLsTotal() {
+      try {
+        const c = (win.LS && win.LS.cart) || {};
+        return toAmount(c.total);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function getCurrentTotal() {
+      const fromDom = getSubtotalAmount();
+      if (fromDom != null) return Number(fromDom);
+      const fromLs = getLsTotal();
+      if (fromLs != null) return Number(fromLs);
+      return 0;
+    }
+
+    function ensureBarMounted() {
+      const existing = doc.getElementById('app-barra-progreso');
+      if (existing) return existing;
+
+      const wrapper = doc.createElement('div');
+      wrapper.id = 'app-barra-progreso';
+      wrapper.className = 'tn-progressbar';
+      wrapper.innerHTML = [
+        '<div class="tn-progressbar__text" id="tn-progressbar-text">&nbsp;</div>',
+        '<div class="tn-progressbar__track">',
+        '  <div class="tn-progressbar__fill" id="tn-progressbar-fill"></div>',
+        '</div>',
+      ].join('');
+
+      const cartList = doc.querySelector('.js-ajax-cart-list');
+      if (cartList) {
+        const firstItem = cartList.querySelector('.js-cart-item');
+        if (firstItem && firstItem.parentNode) {
+          firstItem.parentNode.insertBefore(wrapper, firstItem);
+          return wrapper;
+        }
+        cartList.prepend(wrapper);
+        return wrapper;
+      }
+
+      const subtotalRow = doc.querySelector('[data-store="cart-subtotal"]');
+      if (subtotalRow && subtotalRow.parentNode) {
+        subtotalRow.parentNode.insertBefore(wrapper, subtotalRow);
+        return wrapper;
+      }
+
+      const anchor = getSubtotalNode() || doc.querySelector('.js-cart-item');
+      if (!anchor || !anchor.parentNode) return null;
+      anchor.parentNode.insertBefore(wrapper, anchor);
+      return wrapper;
+    }
+
+    function removeBar() {
+      const node = doc.getElementById('app-barra-progreso');
+      if (node && node.parentNode) node.parentNode.removeChild(node);
+    }
+
+    function buildUiResult(total) {
+      const cfg = state.config;
+      const localEnvio = buildLocalEnvioResult(total, cfg);
+      const localCuotas = buildLocalCuotasResult(total, cfg);
+
+      if (state.lastRemote && Math.abs(Number(state.lastRemote.cart_total || 0) - total) < 0.01) {
+        const remote = state.lastRemote;
+        if (remote.regalo && remote.regalo.enabled) {
+          const color = String(remote.regalo.bar_color || '#a855f7');
+          if (remote.regalo.reached) {
+            return {
+              pct: 100,
+              message: String(remote.regalo.text_reached || '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>'),
+              color,
+            };
+          }
+          const pfx = String(remote.regalo.text_prefix || '').trim();
+          const sfx = String(remote.regalo.text_suffix || '').trim();
+          return {
+            pct: clampPct(Number(remote.regalo.progress || 0) * 100),
+            message: `${pfx || 'Te faltan'} <strong>$${money(remote.regalo.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
+            color,
+          };
+        }
+
+        if (remote.cuotas && remote.cuotas.enabled && remote.cuotas.scope !== 'all') {
+          const color = String(remote.cuotas.bar_color || '#0ea5e9');
+          if (remote.cuotas.reached) {
+            return {
+              pct: 100,
+              message: String(remote.cuotas.text_reached || '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>'),
+              color,
+            };
+          }
+          const pfx = String(remote.cuotas.text_prefix || '').trim();
+          const sfx = String(remote.cuotas.text_suffix || '').trim();
+          return {
+            pct: clampPct(Number(remote.cuotas.progress || 0) * 100),
+            message: `${pfx || 'Te faltan'} <strong>$${money(remote.cuotas.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
+            color,
+          };
+        }
+
+        if (remote.envio && remote.envio.enabled && remote.envio.scope !== 'all') {
+          const color = String(remote.envio.bar_color || '#2563eb');
+          if (remote.envio.reached) {
+            return {
+              pct: 100,
+              message: String(remote.envio.text_reached || '<span class="tn-progressbar__ok">Envio gratis activado.</span>'),
+              color,
+            };
+          }
+          const pfx = String(remote.envio.text_prefix || '').trim();
+          const sfx = String(remote.envio.text_suffix || '').trim();
+          return {
+            pct: clampPct(Number(remote.envio.progress || 0) * 100),
+            message: `${pfx || 'Te faltan'} <strong>$${money(remote.envio.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
+            color,
+          };
+        }
+      }
+
+      return localCuotas || localEnvio || renderDefault(total, cfg);
+    }
+
+    function renderNow() {
+      if (isExplicitEmpty()) {
+        removeBar();
+        return;
+      }
+      const wrapper = ensureBarMounted();
+      if (!wrapper) return;
+
+      const fill = doc.getElementById('tn-progressbar-fill');
+      const text = doc.getElementById('tn-progressbar-text');
+      if (!fill || !text) return;
+
+      const total = getCurrentTotal();
+      const result = buildUiResult(total);
+
+      fill.style.width = `${clampPct(result.pct)}%`;
+      fill.style.background = result.color || '#2563eb';
+      text.innerHTML = result.message || '&nbsp;';
+      state.lastRendered = result;
+    }
+
+    function scheduleRender() {
+      if (state.raf) win.cancelAnimationFrame(state.raf);
+      state.raf = win.requestAnimationFrame(function () {
+        state.raf = null;
+        renderNow();
+      });
+    }
+
+    function buildSnapshot() {
+      const c = (win.LS && win.LS.cart) || {};
+      const list = Array.isArray(c.products) ? c.products : (Array.isArray(c.items) ? c.items : []);
+      const items = list.map(function (item) {
+        const pid = String(item.product_id || item.id || (item.product && item.product.id) || '').trim();
+        const qty = Math.max(1, Number(item.quantity || 1));
+        const unit = toAmount(item.unit_price || item.price || item.unitPrice || item.base_price);
+        const lineRaw = item.line_total || item.subtotal || item.total || item.line_price;
+        const line = toAmount(lineRaw) || (unit != null ? unit * qty : 0);
+        const categories = Array.isArray(item.categories) ? item.categories.map(function (c0) { return String((c0 && c0.id) || c0); }) : [];
+        return { product_id: pid, quantity: qty, unit_price: unit != null ? unit : 0, line_total: line, categories };
+      }).filter(function (i) { return i.product_id; });
+
+      const total = getCurrentTotal();
+      return { total_amount: Number(total || 0), items };
+    }
+
+    async function evaluateRemote() {
+      if (!detectStoreId()) return;
+      if (!requiresRemoteEvaluation(state.config)) {
+        state.lastRemote = null;
+        return;
+      }
+
+      const snapshot = buildSnapshot();
+      if (state.evalTimer) clearTimeout(state.evalTimer);
+      state.evalTimer = setTimeout(async function () {
+        try {
+          const controller = new AbortController();
+          const abortTimer = setTimeout(function () { controller.abort(); }, 1200);
+          const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(snapshot),
+            signal: controller.signal,
+          });
+          clearTimeout(abortTimer);
+          if (!res.ok) return;
+          const data = await res.json();
+          state.lastRemote = data;
+          renderNow();
+        } catch (_) {}
+      }, 90);
+    }
+
+    async function loadConfig(force) {
+      if (!detectStoreId()) return;
+      const now = Date.now();
+      const minInterval = state.config ? 3000 : 400;
+      if (!force && now - state.lastConfigFetchAt < minInterval) return;
+      state.lastConfigFetchAt = now;
+
+      try {
+        const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        state.config = data || null;
+        state.configLoaded = !!data;
+        try {
+          if (win.localStorage && data) {
+            win.localStorage.setItem(getCacheKey(), JSON.stringify(data));
+          }
+        } catch (_) {}
+        renderNow();
+        evaluateRemote();
+      } catch (_) {}
+    }
+
+    function bindSubtotalObserver() {
+      const node = getSubtotalNode();
+      if (!node) return;
+      if (state.observedNode === node) return;
+      if (state.subtotalObserver) {
+        state.subtotalObserver.disconnect();
+      }
+      state.observedNode = node;
+      state.subtotalObserver = new MutationObserver(function () {
+        scheduleRender();
+        evaluateRemote();
+      });
+      state.subtotalObserver.observe(node, {
+        attributes: true,
+        attributeFilter: ['data-priceraw', 'data-component-value'],
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
+
+    function bindDomObserver() {
+      if (state.domObserver) return;
+      state.domObserver = new MutationObserver(function () {
+        ensureBarMounted();
+        bindSubtotalObserver();
+        scheduleRender();
+      });
+      state.domObserver.observe(doc.body, { childList: true, subtree: true });
+    }
+
+    function pulseRefresh() {
+      const end = Date.now() + 1400;
+      const tick = function () {
+        scheduleRender();
+        evaluateRemote();
+        if (Date.now() < end) setTimeout(tick, 70);
+      };
+      tick();
+    }
+
+    doc.addEventListener('cart:updated', function () {
+      scheduleRender();
+      evaluateRemote();
+    });
+
+    doc.addEventListener('click', function (event) {
+      const target = event && event.target;
+      if (!target) return;
+      const ctrl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
+      if (!ctrl) return;
+      pulseRefresh();
+    });
+
+    doc.addEventListener('input', function (event) {
+      const target = event && event.target;
+      if (!target) return;
+      if (target.classList && target.classList.contains('js-cart-quantity-input')) {
+        pulseRefresh();
+      }
+    });
+
+    ensureBarMounted();
+    bindSubtotalObserver();
+    bindDomObserver();
+    renderNow();
+
+    loadConfig(true).catch(function () {});
+
+    const fastBoot = setInterval(function () {
+      if (state.configLoaded) {
+        clearInterval(fastBoot);
+        return;
+      }
+      loadConfig(true).catch(function () {});
+      scheduleRender();
+    }, 250);
+
+    setInterval(function () {
+      scheduleRender();
+      evaluateRemote();
+    }, 180);
+
+    setInterval(function () {
+      loadConfig(false).catch(function () {});
+    }, 2000);
   }
 
-  document.addEventListener('cart:updated', function (event) {
-    ensureStoreContext();
-    const cart = event && event.detail ? event.detail.cart : null;
-    const snapshot = buildCartSnapshot(cart);
-    render(snapshot.total_amount, snapshot);
-    scheduleEvaluate(snapshot);
-  });
-
-  document.addEventListener('click', function (event) {
-    const target = event && event.target;
-    if (!target) return;
-    const quantityControl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
-    if (!quantityControl) return;
-    pulseRefresh(1400);
-  });
-
-  document.addEventListener('input', function (event) {
-    const target = event && event.target;
-    if (!target) return;
-    if (target.classList && target.classList.contains('js-cart-quantity-input')) {
-      pulseRefresh(1400);
-    }
-  });
-
-  ensureBarMounted();
-  ensureStoreContext();
-  bindSubtotalObserver();
-  bindDomObserver();
-  const initial = buildCartSnapshot();
-  render(initial.total_amount, initial);
-  scheduleEvaluate(initial);
-
-  loadConfig(true).then(function () {
-    const amount = getSubtotalAmount();
-    const snapshot = buildCartSnapshot(null, amount);
-    render(snapshot.total_amount, snapshot);
-    scheduleEvaluate(snapshot);
-  }).catch(function () {});
-
-  setInterval(function () {
-    ensureStoreContext();
-    scheduleRenderFromDom(false);
-    const amount = getSubtotalAmount();
-    const snapshot = buildCartSnapshot(null, amount);
-    if (isCartEmpty(snapshot)) {
-      removeBar();
-      return;
-    }
-    ensureBarMounted();
-    scheduleEvaluate(snapshot);
-  }, 180);
-
-  setInterval(function () {
-    loadConfig().then(function () {
-      const amount = getSubtotalAmount();
-      const snapshot = buildCartSnapshot(null, amount);
-      render(snapshot.total_amount, snapshot);
-      scheduleEvaluate(snapshot);
-    }).catch(function () {});
-  }, 1000);
-
-  // Aggressive bootstrap: until config is ready, retry fast.
-  const bootTimer = setInterval(function () {
-    if (state.configReady) {
-      clearInterval(bootTimer);
-      return;
-    }
-    loadConfig(true).catch(function () {});
-    scheduleRenderFromDom(false);
-  }, 250);
-})();
-
-
-
-
-
-
-
-
-
-
-
-
+  return {
+    APP_VERSION,
+    clampPct,
+    toAmount,
+    parseSubtotalFromText,
+    buildLocalEnvioResult,
+    buildLocalCuotasResult,
+    renderDefault,
+    requiresRemoteEvaluation,
+    init,
+  };
+});

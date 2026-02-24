@@ -6,7 +6,7 @@
     "scripts":  {
                     "start":  "node index.js",
                     "init-db":  "node init-db.js",
-                    "test":  "echo \"Error: no test specified\" \u0026\u0026 exit 1"
+                    "test":  "node tests/progressbar.test.js"
                 },
     "keywords":  [
 
