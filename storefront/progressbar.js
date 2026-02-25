@@ -1,4 +1,4 @@
-﻿(function (root, factory) {
+(function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
     return;
@@ -362,7 +362,9 @@
       return decideEmpty({
         now: Date.now(),
         lastEvidenceAt: state.lastEvidenceAt,
-        stableMs: 300,
+        // Be more conservative before declaring the cart empty to avoid
+        // flicker while the theme re-renders the cart and subtotal.
+        stableMs: 900,
         lsCount,
         hasItems,
         subtotal,
@@ -411,7 +413,7 @@
         }
 
         scheduleRender();
-      }, 120);
+      }, 80);
     }
 
     function getCartRoot() {
@@ -721,6 +723,8 @@
       state.lastEvalKey = evalKey;
 
       if (state.evalTimer) clearTimeout(state.evalTimer);
+      // Use a very small debounce so that evaluation feels instant
+      // while still coalescing rapid bursts of changes.
       state.evalTimer = setTimeout(async function () {
         try {
           if (state.evalInFlight) {
@@ -743,7 +747,7 @@
           state.lastRemote = data;
           renderNow();
         } catch (_) {}
-      }, 90);
+      }, 20);
     }
 
     async function loadConfig(force) {
