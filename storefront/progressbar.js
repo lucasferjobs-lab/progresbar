@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-10';
+  const APP_VERSION = '2026-02-24-11';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -224,6 +224,7 @@
       lastRendered: null,
       forceLocalUntil: 0,
       barHiddenUntilConfig: false,
+      suppressEmptyUntil: 0,
     };
 
     function detectStoreId() {
@@ -306,6 +307,7 @@
     }
 
     function isCartEmpty() {
+      if (Date.now() < state.suppressEmptyUntil) return false;
       // Prefer LS.cart (real state) to avoid transient DOM rerenders.
       const lsCount = getLsItemCount();
       if (lsCount === 0) return true;
@@ -722,6 +724,7 @@
     function pulseRefresh() {
       const end = Date.now() + 1400;
       state.forceLocalUntil = Date.now() + 1600;
+      state.suppressEmptyUntil = Math.max(state.suppressEmptyUntil, Date.now() + 2200);
       const tick = function () {
         scheduleRender();
         evaluateRemote();
@@ -731,6 +734,7 @@
     }
 
     doc.addEventListener('cart:updated', function () {
+      state.suppressEmptyUntil = Math.max(state.suppressEmptyUntil, Date.now() + 900);
       scheduleRender();
       evaluateRemote();
     });
@@ -738,6 +742,8 @@
     doc.addEventListener('click', function (event) {
       const target = event && event.target;
       if (!target) return;
+      const removeBtn = target.closest ? target.closest('[data-component="line-item.remove"],.js-cart-item-remove,.js-cart-item-delete') : null;
+      if (removeBtn) return;
       const ctrl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
       if (!ctrl) return;
       pulseRefresh();
