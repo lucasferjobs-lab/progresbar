@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-18';
+  const APP_VERSION = '2026-02-24-19';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -244,6 +244,8 @@
       observedNode: null,
       cartObserver: null,
       observedCartRoot: null,
+      modalObserver: null,
+      observedModal: null,
       domObserver: null,
       lastRendered: null,
       forceLocalUntil: 0,
@@ -497,12 +499,17 @@
       const root = container;
       const cartList = root.querySelector ? root.querySelector('.js-ajax-cart-list') : null;
       if (cartList) {
+        // Insert before the modal body so it survives list/body rerenders.
+        const panel = root.querySelector ? root.querySelector('.js-ajax-cart-panel') : null;
+        const body = (panel || root).querySelector ? (panel || root).querySelector('.modal-body') : null;
+        if (body && body.parentNode) {
+          body.parentNode.insertBefore(wrapper, body);
+          return wrapper;
+        }
         if (cartList.parentNode) {
           cartList.parentNode.insertBefore(wrapper, cartList);
           return wrapper;
         }
-        cartList.prepend(wrapper);
-        return wrapper;
       }
 
       const subtotalRow = root.querySelector ? root.querySelector('[data-store="cart-subtotal"]') : null;
@@ -632,13 +639,7 @@
       const text = doc.getElementById('tn-progressbar-text');
       if (!fill || !text) return;
 
-      if (!state.configLoaded) {
-        state.barHiddenUntilConfig = true;
-        setBarVisible(false);
-        return;
-      }
-      // Always force visible when cart is not empty and config exists.
-      // Tiendanube cart rerenders can temporarily hide or remove nodes.
+      // Always force visible when cart is not empty.
       state.barHiddenUntilConfig = false;
       setBarVisible(true);
 
@@ -818,12 +819,32 @@
       });
     }
 
+    function bindModalObserver() {
+      const modal = doc.getElementById('modal-cart') || doc.querySelector('[data-component="cart"]');
+      if (!modal) return;
+      if (state.observedModal === modal) return;
+      if (state.modalObserver) state.modalObserver.disconnect();
+      state.observedModal = modal;
+      state.modalObserver = new MutationObserver(function () {
+        try {
+          maybeStartCartOpenPoll();
+          ensureBarMounted();
+          scheduleRender();
+        } catch (_) {}
+      });
+      state.modalObserver.observe(modal, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'aria-hidden'],
+      });
+    }
+
     function bindDomObserver() {
       if (state.domObserver) return;
       state.domObserver = new MutationObserver(function () {
         ensureBarMounted();
         bindSubtotalObserver();
         bindCartObserver();
+        bindModalObserver();
         maybeStartCartOpenPoll();
         patchLsCartMethods();
         scheduleRender();
@@ -912,7 +933,7 @@
       const ctrl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
       if (!ctrl) return;
       pulseRefresh();
-    });
+    }, true);
 
     doc.addEventListener('input', function (event) {
       const target = event && event.target;
@@ -920,11 +941,12 @@
       if (target.classList && target.classList.contains('js-cart-quantity-input')) {
         pulseRefresh();
       }
-    });
+    }, true);
 
     ensureBarMounted();
     bindSubtotalObserver();
     bindCartObserver();
+    bindModalObserver();
     bindDomObserver();
     renderNow();
 
