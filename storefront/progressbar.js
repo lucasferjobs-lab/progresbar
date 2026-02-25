@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-11';
+  const APP_VERSION = '2026-02-25-14';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -298,11 +298,37 @@
         dump: function () { return debugLog.slice(); },
         state: function () {
           try {
+            const cfg = state.config || null;
             return {
               app_version: APP_VERSION,
               store_id: detectStoreId(),
               config_loaded: !!state.configLoaded,
               has_config: !!state.config,
+              envio: cfg ? {
+                enabled: cfg.enable_envio_rule,
+                scope: cfg.envio_scope,
+                min_amount: cfg.envio_min_amount,
+                monto_envio_gratis: cfg.monto_envio_gratis,
+                product_id: cfg.envio_product_id,
+                category_id: cfg.envio_category_id,
+                bar_color: cfg.envio_bar_color,
+              } : null,
+              cuotas: cfg ? {
+                enabled: cfg.enable_cuotas_rule,
+                scope: cfg.cuotas_scope,
+                threshold_amount: cfg.cuotas_threshold_amount,
+                monto_cuotas: cfg.monto_cuotas,
+                product_id: cfg.cuotas_product_id,
+                category_id: cfg.cuotas_category_id,
+                bar_color: cfg.cuotas_bar_color,
+              } : null,
+              regalo: cfg ? {
+                enabled: cfg.enable_regalo_rule,
+                mode: cfg.regalo_mode,
+                min_amount: cfg.regalo_min_amount,
+                monto_regalo: cfg.monto_regalo,
+                bar_color: cfg.regalo_bar_color,
+              } : null,
               last_evidence_ms_ago: state.lastEvidenceAt ? Date.now() - state.lastEvidenceAt : null,
               keep_visible_ms_left: Math.max(0, (state.keepVisibleUntil || 0) - Date.now()),
               last_subtotal_raw: state.lastSubtotalRaw,
@@ -363,27 +389,44 @@
       return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
     }
 
-    function resolveCartRoot() {
-      const bar = doc.getElementById('app-barra-progreso');
-      if (bar && bar.closest) {
-        const root = bar.closest('#modal-cart,[data-component="cart"],.js-ajax-cart-panel');
-        if (root) return root;
+    function elSummary(el) {
+      try {
+        if (!el) return null;
+        return {
+          tag: String(el.tagName || '').toLowerCase(),
+          id: el.id || null,
+          class: typeof el.className === 'string' ? el.className : null,
+          visible: isVisible(el),
+        };
+      } catch (_) {
+        return null;
       }
-      return (
-        doc.getElementById('modal-cart') ||
-        doc.querySelector('[data-component="cart"]') ||
-        doc.querySelector('.js-ajax-cart-panel') ||
-        doc.body
-      );
     }
 
     function getCartContainer() {
-      return (
-        doc.getElementById('modal-cart') ||
-        doc.querySelector('[data-component="cart"]') ||
-        doc.querySelector('.js-ajax-cart-panel') ||
-        null
-      );
+      const nodes = [];
+      function add(el) {
+        if (!el) return;
+        if (nodes.indexOf(el) !== -1) return;
+        nodes.push(el);
+      }
+      add(doc.getElementById('modal-cart'));
+      const others = doc.querySelectorAll ? doc.querySelectorAll('[data-component="cart"],.js-ajax-cart-panel') : [];
+      for (let i = 0; i < (others ? others.length : 0); i++) add(others[i]);
+
+      // Prefer the visible cart container (themes often keep a hidden copy).
+      for (let i = 0; i < nodes.length; i++) {
+        if (isVisible(nodes[i])) return nodes[i];
+      }
+
+      // If none is visible yet, prefer #modal-cart (it is usually the one that opens).
+      const modal = doc.getElementById('modal-cart');
+      if (modal) return modal;
+      return nodes[0] || null;
+    }
+
+    function resolveCartRoot() {
+      return getCartContainer() || doc.body;
     }
 
     function q(selector) {
@@ -482,7 +525,7 @@
         }
 
         patchLsCartMethods();
-        ensureBarMounted();
+        const wrapper = ensureBarMounted();
 
         const node = getSubtotalNode();
         const raw = node && node.getAttribute ? node.getAttribute('data-priceraw') : null;
@@ -490,7 +533,9 @@
         if (changed) state.lastSubtotalRaw = raw;
 
         // Only re-render when something changed; observers handle most cases.
-        if (changed || !doc.getElementById('tn-progressbar-fill') || !doc.getElementById('tn-progressbar-text')) {
+        const fill = wrapper && wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-fill') || wrapper.querySelector('.tn-progressbar__fill,.js-pb-fill')) : null;
+        const text = wrapper && wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-text') || wrapper.querySelector('.tn-progressbar__text,.js-pb-text')) : null;
+        if (changed || !fill || !text) {
           scheduleRender();
           scheduleRemoteEval();
         }
@@ -598,26 +643,41 @@
     }
 
     function ensureBarMounted() {
-      let existing = doc.getElementById('app-barra-progreso');
-      if (existing && !doc.body.contains(existing)) {
-        dbg('mount:detached', null, 'warn');
-        existing = null;
-      }
-      if (existing) return existing;
-
       const container = getCartContainer();
       if (!container) {
         dbg('mount:missing_container', null);
         return null;
       }
 
+      // Search ONLY inside the active cart container (themes often duplicate carts).
+      let existing = container.querySelector ? container.querySelector('#app-barra-progreso') : null;
+      if (existing && !doc.body.contains(existing)) {
+        dbg('mount:detached', null, 'warn');
+        existing = null;
+      }
+      if (existing) {
+        dbg('mount:reuse', { container: elSummary(container) }, 'debug');
+        return existing;
+      }
+
+      // Cleanup any stray bars outside the active container (avoid duplicate IDs).
+      try {
+        const all = doc.querySelectorAll ? doc.querySelectorAll('#app-barra-progreso') : [];
+        for (let i = 0; i < (all ? all.length : 0); i++) {
+          const node = all[i];
+          if (!node) continue;
+          if (container.contains(node)) continue;
+          if (node.parentNode) node.parentNode.removeChild(node);
+        }
+      } catch (_) {}
+
       const wrapper = doc.createElement('div');
       wrapper.id = 'app-barra-progreso';
-      wrapper.className = 'tn-progressbar';
+      wrapper.className = 'tn-progressbar app-barra-progreso-wrapper';
       wrapper.innerHTML = [
-        '<div class="tn-progressbar__text" id="tn-progressbar-text">&nbsp;</div>',
+        '<div class="tn-progressbar__text js-pb-text" id="tn-progressbar-text">&nbsp;</div>',
         '<div class="tn-progressbar__track">',
-        '  <div class="tn-progressbar__fill" id="tn-progressbar-fill"></div>',
+        '  <div class="tn-progressbar__fill js-pb-fill" id="tn-progressbar-fill"></div>',
         '</div>',
       ].join('');
 
@@ -628,19 +688,19 @@
       if (body && cartList && cartList.parentNode) {
         // Prefer inside the cart body, right above products.
         cartList.parentNode.insertBefore(wrapper, cartList);
-        dbg('mount:ok', { at: 'before_list' });
+        dbg('mount:ok', { at: 'before_list', container: elSummary(container) }, 'info');
         return wrapper;
       }
       if (body) {
         body.insertBefore(wrapper, body.firstChild);
-        dbg('mount:ok', { at: 'inside_body' });
+        dbg('mount:ok', { at: 'inside_body', container: elSummary(container) }, 'info');
         return wrapper;
       }
 
       const subtotalRow = root.querySelector ? root.querySelector('[data-store="cart-subtotal"]') : null;
       if (subtotalRow && subtotalRow.parentNode) {
         subtotalRow.parentNode.insertBefore(wrapper, subtotalRow);
-        dbg('mount:ok', { at: 'before_subtotal' });
+        dbg('mount:ok', { at: 'before_subtotal', container: elSummary(container) }, 'info');
         return wrapper;
       }
 
@@ -650,19 +710,33 @@
         return null;
       }
       anchor.parentNode.insertBefore(wrapper, anchor);
-      dbg('mount:ok', { at: 'anchor' });
+      dbg('mount:ok', { at: 'anchor', container: elSummary(container) }, 'info');
       return wrapper;
     }
 
     function removeBar() {
-      const node = doc.getElementById('app-barra-progreso');
-      if (node && node.parentNode) node.parentNode.removeChild(node);
+      try {
+        const nodes = doc.querySelectorAll ? doc.querySelectorAll('#app-barra-progreso') : [];
+        for (let i = 0; i < (nodes ? nodes.length : 0); i++) {
+          const node = nodes[i];
+          if (node && node.parentNode) node.parentNode.removeChild(node);
+        }
+      } catch (_) {}
     }
 
-    function setBarVisible(visible) {
-      const node = doc.getElementById('app-barra-progreso');
-      if (!node) return;
-      node.style.display = visible ? '' : 'none';
+    function setBarVisible(visible, wrapper) {
+      if (wrapper && wrapper.style) {
+        wrapper.style.display = visible ? '' : 'none';
+        return;
+      }
+      try {
+        const nodes = doc.querySelectorAll ? doc.querySelectorAll('#app-barra-progreso') : [];
+        for (let i = 0; i < (nodes ? nodes.length : 0); i++) {
+          const node = nodes[i];
+          if (!node || !node.style) continue;
+          node.style.display = visible ? '' : 'none';
+        }
+      } catch (_) {}
     }
 
     function buildUiResult(total) {
@@ -673,12 +747,41 @@
 
       if (!state.configLoaded) {
         // Don't show defaults while config is still loading.
+        dbg('ui:cfg_missing', null, 'debug');
         return state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
+      }
+
+      if (debugEnabled) {
+        const envioScope = String((cfg && cfg.envio_scope) || 'all');
+        const cuotasScope = String((cfg && cfg.cuotas_scope) || 'all');
+        const envioThreshold = Math.max(0, pickThreshold(cfg && cfg.envio_min_amount, cfg && cfg.monto_envio_gratis));
+        const cuotasThreshold = Math.max(0, pickThreshold(cfg && cfg.cuotas_threshold_amount, cfg && cfg.monto_cuotas));
+        dbg('ui:local', {
+          total,
+          preferLocalOnly,
+          envio: {
+            enabled: cfg ? cfg.enable_envio_rule : null,
+            scope: envioScope,
+            threshold: envioThreshold,
+            product_id: cfg ? cfg.envio_product_id : null,
+            category_id: cfg ? cfg.envio_category_id : null,
+            pct: localEnvio ? localEnvio.pct : null,
+          },
+          cuotas: {
+            enabled: cfg ? cfg.enable_cuotas_rule : null,
+            scope: cuotasScope,
+            threshold: cuotasThreshold,
+            product_id: cfg ? cfg.cuotas_product_id : null,
+            category_id: cfg ? cfg.cuotas_category_id : null,
+            pct: localCuotas ? localCuotas.pct : null,
+          },
+        }, 'debug');
       }
 
       if (!preferLocalOnly && state.lastRemote && Math.abs(Number(state.lastRemote.cart_total || 0) - total) < 0.01) {
         const remote = state.lastRemote;
         if (remote.regalo && remote.regalo.enabled) {
+          dbg('ui:remote', { type: 'regalo', scope: remote.regalo.scope || null, progress: remote.regalo.progress, eligible: remote.regalo.eligible_subtotal }, 'debug');
           const color = String(remote.regalo.bar_color || '#a855f7');
           if (remote.regalo.reached) {
             return {
@@ -697,6 +800,7 @@
         }
 
         if (remote.cuotas && remote.cuotas.enabled && remote.cuotas.scope !== 'all') {
+          dbg('ui:remote', { type: 'cuotas', scope: remote.cuotas.scope, progress: remote.cuotas.progress, eligible: remote.cuotas.eligible_subtotal }, 'debug');
           const color = String(remote.cuotas.bar_color || '#0ea5e9');
           if (remote.cuotas.reached) {
             return {
@@ -715,6 +819,7 @@
         }
 
         if (remote.envio && remote.envio.enabled && remote.envio.scope !== 'all') {
+          dbg('ui:remote', { type: 'envio', scope: remote.envio.scope, progress: remote.envio.progress, eligible: remote.envio.eligible_subtotal }, 'debug');
           const color = String(remote.envio.bar_color || '#2563eb');
           if (remote.envio.reached) {
             return {
@@ -735,6 +840,7 @@
 
       // If admin config exists, never fall back to default copy/colors.
       if (state.configLoaded) {
+        dbg('ui:pick', { localEnvio: !!localEnvio, localCuotas: !!localCuotas }, 'debug');
         return localEnvio || localCuotas || null;
       }
 
@@ -772,31 +878,29 @@
         dbg('render:no_wrapper', null);
         return;
       }
+      dbg('render:wrapper', { wrapper: elSummary(wrapper), container: elSummary(getCartContainer()) }, 'debug');
 
-      let fill = doc.getElementById('tn-progressbar-fill');
-      let text = doc.getElementById('tn-progressbar-text');
+      let fill = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-fill') || wrapper.querySelector('.tn-progressbar__fill,.js-pb-fill')) : null;
+      let text = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-text') || wrapper.querySelector('.tn-progressbar__text,.js-pb-text')) : null;
       if (!fill || !text) {
         // Cart rerenders can temporarily wipe our inner nodes. Repair in-place.
         dbg('render:missing_nodes', null, 'warn');
         try {
-          const w = doc.getElementById('app-barra-progreso');
-          if (w) {
-            w.innerHTML = [
-              '<div class="tn-progressbar__text" id="tn-progressbar-text">&nbsp;</div>',
-              '<div class="tn-progressbar__track">',
-              '  <div class="tn-progressbar__fill" id="tn-progressbar-fill"></div>',
-              '</div>',
-            ].join('');
-          }
+          wrapper.innerHTML = [
+            '<div class="tn-progressbar__text js-pb-text" id="tn-progressbar-text">&nbsp;</div>',
+            '<div class="tn-progressbar__track">',
+            '  <div class="tn-progressbar__fill js-pb-fill" id="tn-progressbar-fill"></div>',
+            '</div>',
+          ].join('');
         } catch (_) {}
-        fill = doc.getElementById('tn-progressbar-fill');
-        text = doc.getElementById('tn-progressbar-text');
+        fill = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-fill') || wrapper.querySelector('.tn-progressbar__fill,.js-pb-fill')) : null;
+        text = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-text') || wrapper.querySelector('.tn-progressbar__text,.js-pb-text')) : null;
         if (!fill || !text) return;
       }
 
       // Always force visible when cart is not empty.
       state.barHiddenUntilConfig = false;
-      setBarVisible(true);
+      setBarVisible(true, wrapper);
 
       const total = getCurrentTotal();
       dbg('render:total', { total }, 'debug');
@@ -824,7 +928,7 @@
         // a neutral fallback instead of hiding it. This avoids flicker and
         // “missing bar” glitches while configuration or remote evaluation
         // catch up.
-        setBarVisible(true);
+        setBarVisible(true, wrapper);
         const fallback = state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
         fill.style.width = `${clampPct(fallback.pct)}%`;
         fill.style.backgroundImage = 'none';
@@ -839,7 +943,7 @@
       fill.style.backgroundColor = result.color || '#2563eb';
       text.innerHTML = result.message || '&nbsp;';
       state.lastRendered = result;
-      dbg('render:done', { pct: result.pct, color: result.color }, 'info');
+      dbg('render:done', { pct: result.pct, color: result.color, width: fill.style.width }, 'info');
     }
 
     function scheduleRender() {
