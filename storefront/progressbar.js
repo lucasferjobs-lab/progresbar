@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-14';
+  const APP_VERSION = '2026-02-25-15';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -494,13 +494,11 @@
     }
 
     function isCartOpen() {
-      const modal = doc.getElementById('modal-cart');
-      if (modal) {
-        if (modal.classList && modal.classList.contains('modal-show')) return true;
-        return isVisible(modal);
-      }
       const root = getCartContainer();
       if (!root) return false;
+      // Some themes keep multiple cart containers in the DOM; rely on the
+      // active/visible container chosen by getCartContainer().
+      if (root.id === 'modal-cart' && root.classList && root.classList.contains('modal-show')) return true;
       return isVisible(root);
     }
 
@@ -1156,7 +1154,7 @@
     }
 
     function bindModalObserver() {
-      const modal = doc.getElementById('modal-cart') || doc.querySelector('[data-component="cart"]');
+      const modal = getCartContainer();
       if (!modal) return;
       if (state.observedModal === modal) return;
       if (state.modalObserver) state.modalObserver.disconnect();
