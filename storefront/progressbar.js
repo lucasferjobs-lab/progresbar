@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-16';
+  const APP_VERSION = '2026-02-25-17';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -230,9 +230,7 @@
     let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
     const bootAt = Date.now();
 
-    if (win.console && typeof win.console.info === 'function') {
-      win.console.info('[ProgressBar] app version:', APP_VERSION, 'store:', storeId || 'unknown');
-    }
+    // Intentionally no console logs in production.
 
     const state = {
       config: null,
@@ -286,9 +284,7 @@
         const t = Date.now();
         debugLog.push({ t, dt: t - bootAt, event: String(event || ''), details: details || null });
         if (debugLog.length > 400) debugLog.shift();
-        const lvl = String(level || 'debug');
-        const logger = (win.console && (win.console[lvl] || win.console.debug || win.console.log)) || null;
-        if (typeof logger === 'function') logger.call(win.console, '[ProgressBar]', event, details || '');
+        void level;
       } catch (_) {}
     }
 
