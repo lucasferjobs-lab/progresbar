@@ -465,7 +465,29 @@
     function getLsTotal() {
       try {
         const c = (win.LS && win.LS.cart) || {};
-        return toAmount(c.total);
+        const direct = toAmount(c.total);
+        if (direct != null && direct > 0) return direct;
+
+        // Fallback: recompute total from items when LS.cart.total is
+        // missing, stale or zero. This makes the first render after
+        // adding products much more reliable across themes.
+        const list = Array.isArray(c.products) ? c.products : (Array.isArray(c.items) ? c.items : []);
+        if (!Array.isArray(list) || !list.length) return direct;
+
+        let sum = 0;
+        let found = 0;
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i] || {};
+          const qty = Math.max(1, Number(item.quantity || 1));
+          const unit = toAmount(item.unit_price || item.price || item.unitPrice || item.base_price);
+          const lineRaw = item.line_total || item.subtotal || item.total || item.line_price;
+          const line = toAmount(lineRaw) || (unit != null ? unit * qty : null);
+          if (line == null) continue;
+          sum += line;
+          found += 1;
+        }
+        if (!found) return direct;
+        return sum;
       } catch (_) {
         return null;
       }
@@ -659,7 +681,18 @@
 
       const result = buildUiResult(total);
       if (!result) {
-        setBarVisible(false);
+        // When the cart is not empty but there is no specific rule to show
+        // (or config is in an intermediate state), keep the bar visible with
+        // a neutral fallback instead of hiding it. This avoids flicker and
+        // “missing bar” glitches while configuration or remote evaluation
+        // catch up.
+        setBarVisible(true);
+        const fallback = state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
+        fill.style.width = `${clampPct(fallback.pct)}%`;
+        fill.style.backgroundImage = 'none';
+        fill.style.backgroundColor = fallback.color || '#2563eb';
+        text.innerHTML = fallback.message || '&nbsp;';
+        state.lastRendered = fallback;
         return;
       }
 
