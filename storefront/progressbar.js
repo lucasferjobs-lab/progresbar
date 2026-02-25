@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-07';
+  const APP_VERSION = '2026-02-24-08';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -497,10 +497,10 @@
         setBarVisible(false);
         return;
       }
-      if (state.barHiddenUntilConfig) {
-        state.barHiddenUntilConfig = false;
-        setBarVisible(true);
-      }
+      // Always force visible when cart is not empty and config exists.
+      // Tiendanube cart rerenders can temporarily hide or remove nodes.
+      state.barHiddenUntilConfig = false;
+      setBarVisible(true);
 
       const total = getCurrentTotal();
       if (total == null) {
