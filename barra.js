@@ -2,7 +2,7 @@
   if (window.__TN_PROGRESSBAR_BOOTSTRAPPED__) return;
   window.__TN_PROGRESSBAR_BOOTSTRAPPED__ = true;
 
-  const BUILD_VERSION = '2026-02-24-14';
+  const BUILD_VERSION = '2026-02-24-18';
   window.__TN_PROGRESSBAR_VERSION__ = BUILD_VERSION;
 
   const currentScript = document.currentScript;
@@ -33,6 +33,53 @@
 
   injectCss(`${baseUrl}/static/storefront/progressbar.css${versionedQuery}`);
   injectScript(`${baseUrl}/static/storefront/progressbar.js${versionedQuery}`);
+
+  function resolveStoreId() {
+    try {
+      const fromQuery = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
+      if (fromQuery) return String(fromQuery);
+    } catch (_) {}
+    try {
+      const fromLs = window.LS && window.LS.store && (window.LS.store.id || window.LS.store.store_id);
+      if (fromLs) return String(fromLs);
+    } catch (_) {}
+    try {
+      const fromGlobal = window.Store && (window.Store.id || window.Store.store_id);
+      if (fromGlobal) return String(fromGlobal);
+    } catch (_) {}
+    return null;
+  }
+
+  function prefetchConfig() {
+    const storeId = resolveStoreId();
+    if (!storeId) return false;
+    const cacheKey = `tn_progressbar_cfg_${storeId}`;
+    const lockKey = `tn_progressbar_cfg_prefetch_${storeId}`;
+
+    try {
+      const now = Date.now();
+      const last = Number((window.sessionStorage && window.sessionStorage.getItem(lockKey)) || 0);
+      if (last && now - last < 5000) return true;
+      if (window.sessionStorage) window.sessionStorage.setItem(lockKey, String(now));
+    } catch (_) {}
+
+    fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' })
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        try {
+          if (window.localStorage) window.localStorage.setItem(cacheKey, JSON.stringify(data));
+        } catch (_) {}
+      })
+      .catch(() => {});
+
+    return true;
+  }
+
+  // Prefetch config early so the first cart open renders with custom copy/colors.
+  prefetchConfig();
+  setTimeout(prefetchConfig, 500);
+  setTimeout(prefetchConfig, 2000);
 
   if (window.console && typeof window.console.info === 'function') {
     window.console.info('[ProgressBar] loader version:', BUILD_VERSION);

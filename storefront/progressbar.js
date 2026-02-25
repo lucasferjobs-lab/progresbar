@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-14';
+  const APP_VERSION = '2026-02-24-18';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -249,6 +249,9 @@
       forceLocalUntil: 0,
       barHiddenUntilConfig: false,
       lastEvidenceAt: Date.now(),
+      keepVisibleUntil: 0,
+      openPoller: null,
+      lastSubtotalRaw: null,
     };
 
     function detectStoreId() {
@@ -305,6 +308,15 @@
       );
     }
 
+    function getCartContainer() {
+      return (
+        doc.getElementById('modal-cart') ||
+        doc.querySelector('[data-component="cart"]') ||
+        doc.querySelector('.js-ajax-cart-panel') ||
+        null
+      );
+    }
+
     function q(selector) {
       const root = resolveCartRoot();
       return (root && root.querySelector) ? root.querySelector(selector) : doc.querySelector(selector);
@@ -331,6 +343,10 @@
     }
 
     function isCartEmpty() {
+      // During quantity changes, Tiendanube can briefly show the empty view.
+      // Keep bar visible during that transient window.
+      if (Date.now() < state.keepVisibleUntil) return false;
+
       const lsCount = getLsItemCount();
       const emptyState = q('.js-empty-ajax-cart');
       const emptyVisible = !!(emptyState && isVisible(emptyState));
@@ -350,6 +366,50 @@
         subtotal,
         emptyVisible,
       });
+    }
+
+    function isCartOpen() {
+      const modal = doc.getElementById('modal-cart');
+      if (modal) {
+        if (modal.classList && modal.classList.contains('modal-show')) return true;
+        return isVisible(modal);
+      }
+      const root = getCartContainer();
+      if (!root) return false;
+      return isVisible(root);
+    }
+
+    function maybeStartCartOpenPoll() {
+      if (!isCartOpen()) {
+        if (state.openPoller) {
+          try { clearInterval(state.openPoller); } catch (_) {}
+          state.openPoller = null;
+        }
+        return;
+      }
+
+      if (state.openPoller) return;
+
+      // Low-cost local poll while the modal is open. This covers themes that update
+      // totals without firing observable attribute mutations.
+      state.openPoller = setInterval(function () {
+        if (!isCartOpen()) {
+          try { clearInterval(state.openPoller); } catch (_) {}
+          state.openPoller = null;
+          return;
+        }
+
+        patchLsCartMethods();
+        ensureBarMounted();
+
+        const node = getSubtotalNode();
+        const raw = node && node.getAttribute ? node.getAttribute('data-priceraw') : null;
+        if (raw != null && raw !== state.lastSubtotalRaw) {
+          state.lastSubtotalRaw = raw;
+        }
+
+        scheduleRender();
+      }, 120);
     }
 
     function getCartRoot() {
@@ -382,6 +442,22 @@
       return parseSubtotalFromText(node.textContent || '');
     }
 
+    function getLineItemsTotal() {
+      const root = resolveCartRoot();
+      const nodes = (root && root.querySelectorAll) ? root.querySelectorAll('.js-cart-item-subtotal') : [];
+      if (!nodes || !nodes.length) return null;
+      let sum = 0;
+      let found = 0;
+      for (let i = 0; i < nodes.length; i++) {
+        const v = parseSubtotalFromText(nodes[i].textContent || '');
+        if (v == null) continue;
+        sum += v;
+        found += 1;
+      }
+      if (!found) return null;
+      return sum;
+    }
+
     function getLsTotal() {
       try {
         const c = (win.LS && win.LS.cart) || {};
@@ -394,6 +470,8 @@
     function getCurrentTotal() {
       const fromDom = getSubtotalAmount();
       if (fromDom != null) return Number(fromDom);
+      const fromLines = getLineItemsTotal();
+      if (fromLines != null) return Number(fromLines);
       const fromLs = getLsTotal();
       if (fromLs != null) return Number(fromLs);
       return null;
@@ -402,6 +480,9 @@
     function ensureBarMounted() {
       const existing = doc.getElementById('app-barra-progreso');
       if (existing) return existing;
+
+      const container = getCartContainer();
+      if (!container) return null;
 
       const wrapper = doc.createElement('div');
       wrapper.id = 'app-barra-progreso';
@@ -413,25 +494,30 @@
         '</div>',
       ].join('');
 
-      const root = resolveCartRoot();
-      const cartList = root ? root.querySelector('.js-ajax-cart-list') : doc.querySelector('.js-ajax-cart-list');
+      const root = container;
+      const cartList = root.querySelector ? root.querySelector('.js-ajax-cart-list') : null;
       if (cartList) {
-        const firstItem = cartList.querySelector('.js-cart-item');
-        if (firstItem && firstItem.parentNode) {
-          firstItem.parentNode.insertBefore(wrapper, firstItem);
+        if (cartList.parentNode) {
+          cartList.parentNode.insertBefore(wrapper, cartList);
           return wrapper;
         }
         cartList.prepend(wrapper);
         return wrapper;
       }
 
-      const subtotalRow = root ? root.querySelector('[data-store="cart-subtotal"]') : doc.querySelector('[data-store="cart-subtotal"]');
+      const subtotalRow = root.querySelector ? root.querySelector('[data-store="cart-subtotal"]') : null;
       if (subtotalRow && subtotalRow.parentNode) {
         subtotalRow.parentNode.insertBefore(wrapper, subtotalRow);
         return wrapper;
       }
 
-      const anchor = getSubtotalNode() || (root ? root.querySelector('.js-cart-item') : doc.querySelector('.js-cart-item'));
+      const modalBody = root.querySelector ? root.querySelector('.modal-body') : null;
+      if (modalBody) {
+        modalBody.insertBefore(wrapper, modalBody.firstChild);
+        return wrapper;
+      }
+
+      const anchor = getSubtotalNode() || (root.querySelector ? root.querySelector('.js-cart-item') : null);
       if (!anchor || !anchor.parentNode) return null;
       anchor.parentNode.insertBefore(wrapper, anchor);
       return wrapper;
@@ -738,20 +824,81 @@
         ensureBarMounted();
         bindSubtotalObserver();
         bindCartObserver();
+        maybeStartCartOpenPoll();
+        patchLsCartMethods();
         scheduleRender();
       });
       state.domObserver.observe(doc.body, { childList: true, subtree: true });
     }
 
-    function pulseRefresh() {
+    function pulseRefresh(options) {
+      const keepMsRaw = options && options.keepMs;
+      const keepMs = Number.isFinite(Number(keepMsRaw)) ? Number(keepMsRaw) : 3500;
       const end = Date.now() + 1400;
       state.forceLocalUntil = Date.now() + 1600;
+      state.keepVisibleUntil = Date.now() + Math.max(0, keepMs);
+      maybeStartCartOpenPoll();
       const tick = function () {
         scheduleRender();
         evaluateRemote();
         if (Date.now() < end) setTimeout(tick, 70);
       };
       tick();
+    }
+
+    function patchLsCartMethods() {
+      const LS = win.LS;
+      if (!LS || typeof LS !== 'object') return;
+
+      const methods = [
+        'addToCart',
+        'addItem',
+        'addProduct',
+        'removeItem',
+        'removeProduct',
+        'plusQuantity',
+        'minusQuantity',
+        'updateQuantity',
+        'setQuantity',
+        'updateCart',
+      ];
+
+      methods.forEach(function (name) {
+        const fn = LS[name];
+        if (typeof fn !== 'function') return;
+        if (fn.__tnProgressbarWrapped) return;
+
+        function wrapped() {
+          let out;
+          try {
+            out = fn.apply(LS, arguments);
+          } catch (err) {
+            try {
+              const keepMs = (name === 'removeItem' || name === 'removeProduct') ? 0 : 4500;
+              pulseRefresh({ keepMs });
+            } catch (_) {}
+            throw err;
+          }
+
+          try {
+            const keepMs = (name === 'removeItem' || name === 'removeProduct') ? 0 : 4500;
+            pulseRefresh({ keepMs });
+          } catch (_) {}
+
+          if (out && typeof out.then === 'function') {
+            return out.finally(function () {
+              try {
+                const keepMs = (name === 'removeItem' || name === 'removeProduct') ? 0 : 4500;
+                pulseRefresh({ keepMs });
+              } catch (_) {}
+            });
+          }
+          return out;
+        }
+
+        wrapped.__tnProgressbarWrapped = true;
+        LS[name] = wrapped;
+      });
     }
 
     doc.addEventListener('cart:updated', function () {
@@ -782,6 +929,8 @@
     renderNow();
 
     loadConfig(true).catch(function () {});
+    maybeStartCartOpenPoll();
+    patchLsCartMethods();
 
     // Store id can arrive late (LS boot). Keep trying briefly.
     (function waitForStoreId() {
@@ -791,6 +940,7 @@
         const sid = detectStoreId();
         if (sid) {
           loadConfig(true).catch(function () {});
+          patchLsCartMethods();
           scheduleRender();
           return;
         }
