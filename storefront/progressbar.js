@@ -499,11 +499,20 @@
     }
 
     function getCurrentTotal() {
-      const fromDom = getSubtotalAmount();
-      if (fromDom != null) return Number(fromDom);
-      const fromLines = getLineItemsTotal();
-      if (fromLines != null) return Number(fromLines);
+      // Prefer LS-based totals (which are often updated first) and fall
+      // back to DOM-based subtotals. This makes the very first render
+      // after adding products much more reliable across themes.
       const fromLs = getLsTotal();
+      if (fromLs != null && fromLs > 0) return Number(fromLs);
+
+      const fromDom = getSubtotalAmount();
+      if (fromDom != null && fromDom > 0) return Number(fromDom);
+
+      const fromLines = getLineItemsTotal();
+      if (fromLines != null && fromLines > 0) return Number(fromLines);
+
+      // As a last resort, return whatever LS reported (even if 0/null),
+      // so that callers can decide how to behave on missing totals.
       if (fromLs != null) return Number(fromLs);
       return null;
     }
