@@ -78,6 +78,30 @@ test('pickThreshold prefers higher value', () => {
   assert.strictEqual(logic.pickThreshold('40.000', '40000'), 40000);
 });
 
+test('decideEmpty stays non-empty with evidence', () => {
+  const now = Date.now();
+  assert.strictEqual(
+    logic.decideEmpty({ now, lastEvidenceAt: now, stableMs: 300, lsCount: 0, hasItems: false, subtotal: 0, emptyVisible: true }),
+    false
+  );
+});
+
+test('decideEmpty becomes empty after stable window', () => {
+  const now = Date.now();
+  assert.strictEqual(
+    logic.decideEmpty({ now, lastEvidenceAt: now - 1000, stableMs: 300, lsCount: 0, hasItems: false, subtotal: 0, emptyVisible: true }),
+    true
+  );
+});
+
+test('decideEmpty never empty when subtotal > 0', () => {
+  const now = Date.now();
+  assert.strictEqual(
+    logic.decideEmpty({ now, lastEvidenceAt: now - 1000, stableMs: 300, lsCount: 0, hasItems: false, subtotal: 15000, emptyVisible: true }),
+    false
+  );
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }

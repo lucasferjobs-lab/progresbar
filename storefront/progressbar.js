@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-12';
+  const APP_VERSION = '2026-02-24-14';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -68,6 +68,30 @@
     if (a != null) return a;
     if (b != null) return b;
     return 0;
+  }
+
+  function decideEmpty(input) {
+    const now = Number(input && input.now) || Date.now();
+    const lastEvidenceAt = Number(input && input.lastEvidenceAt) || 0;
+    const stableMs = Number(input && input.stableMs) || 300;
+    const lsCount = input && typeof input.lsCount === 'number' ? input.lsCount : null;
+    const hasItems = !!(input && input.hasItems);
+    const subtotal = input && typeof input.subtotal === 'number' ? input.subtotal : null;
+    const emptyVisible = !!(input && input.emptyVisible);
+
+    // Any evidence of non-empty wins immediately.
+    if (lsCount != null && lsCount > 0) return false;
+    if (hasItems) return false;
+    if (subtotal != null && subtotal > 0) return false;
+
+    // If LS is available and says 0, treat as empty (but allow for transient states).
+    if (lsCount === 0) {
+      return now - lastEvidenceAt > stableMs;
+    }
+
+    // Without LS, require explicit empty view to avoid false negatives.
+    if (!emptyVisible) return false;
+    return now - lastEvidenceAt > stableMs;
   }
 
   function buildLocalEnvioResult(total, cfg) {
@@ -224,6 +248,7 @@
       lastRendered: null,
       forceLocalUntil: 0,
       barHiddenUntilConfig: false,
+      lastEvidenceAt: Date.now(),
     };
 
     function detectStoreId() {
@@ -306,22 +331,25 @@
     }
 
     function isCartEmpty() {
-      // Robust empty detection: only hide when we are sure it's empty.
-      // Tiendanube can transiently reset LS/DOM during rerenders.
       const lsCount = getLsItemCount();
-      if (lsCount != null && lsCount > 0) return false;
-      if (hasCartItems()) return false;
-
-      const subtotal = getSubtotalAmount();
-      if (subtotal != null && subtotal > 0) return false;
-
       const emptyState = q('.js-empty-ajax-cart');
       const emptyVisible = !!(emptyState && isVisible(emptyState));
-      if (lsCount === 0 && emptyVisible) return true;
-      if (emptyVisible) return true;
+      const hasItems = hasCartItems();
+      const subtotal = getSubtotalAmount();
 
-      // Unknown state: treat as NOT empty to avoid flicker.
-      return false;
+      if ((lsCount != null && lsCount > 0) || hasItems || (subtotal != null && subtotal > 0)) {
+        state.lastEvidenceAt = Date.now();
+      }
+
+      return decideEmpty({
+        now: Date.now(),
+        lastEvidenceAt: state.lastEvidenceAt,
+        stableMs: 300,
+        lsCount,
+        hasItems,
+        subtotal,
+        emptyVisible,
+      });
     }
 
     function getCartRoot() {
@@ -707,18 +735,6 @@
     function bindDomObserver() {
       if (state.domObserver) return;
       state.domObserver = new MutationObserver(function () {
-        if (isCartEmpty()) {
-          setBarVisible(false);
-          if (state.evalTimer) {
-            try { clearTimeout(state.evalTimer); } catch (_) {}
-            state.evalTimer = null;
-          }
-          if (state.evalInFlight) {
-            try { state.evalInFlight.abort(); } catch (_) {}
-            state.evalInFlight = null;
-          }
-          return;
-        }
         ensureBarMounted();
         bindSubtotalObserver();
         bindCartObserver();
@@ -801,6 +817,7 @@
     parseSubtotalFromText,
     parseConfigNumber,
     pickThreshold,
+    decideEmpty,
     buildLocalEnvioResult,
     buildLocalCuotasResult,
     renderDefault,
