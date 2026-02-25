@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-08';
+  const APP_VERSION = '2026-02-24-10';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -291,11 +291,29 @@
       return !!node;
     }
 
-    function isExplicitEmpty() {
+    function getLsItemCount() {
+      try {
+        const c = (win.LS && win.LS.cart) || {};
+        const list = Array.isArray(c.products) ? c.products : (Array.isArray(c.items) ? c.items : []);
+        if (!Array.isArray(list)) return null;
+        return list.reduce(function (acc, it) {
+          const q0 = Math.max(0, Number(it && it.quantity) || 0);
+          return acc + q0;
+        }, 0);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function isCartEmpty() {
+      // Prefer LS.cart (real state) to avoid transient DOM rerenders.
+      const lsCount = getLsItemCount();
+      if (lsCount === 0) return true;
+      if (lsCount != null && lsCount > 0) return false;
+
       const emptyState = q('.js-empty-ajax-cart');
-      // Some themes temporarily flip empty-state visibility during ajax rerenders.
-      // Only consider empty when the empty block is visible AND there are no cart items.
-      return !!(emptyState && isVisible(emptyState) && !hasCartItems());
+      const emptyVisible = !!(emptyState && isVisible(emptyState));
+      return emptyVisible && !hasCartItems();
     }
 
     function getCartRoot() {
@@ -471,7 +489,7 @@
     }
 
     function renderNow() {
-      if (isExplicitEmpty()) {
+      if (isCartEmpty()) {
         // Keep DOM node to avoid flicker; just hide it.
         setBarVisible(false);
         state.barHiddenUntilConfig = false;
@@ -568,7 +586,7 @@
 
     async function evaluateRemote() {
       if (!detectStoreId()) return;
-      if (isExplicitEmpty()) return;
+      if (isCartEmpty()) return;
       if (!requiresRemoteEvaluation(state.config)) {
         state.lastRemote = null;
         return;
@@ -681,7 +699,7 @@
     function bindDomObserver() {
       if (state.domObserver) return;
       state.domObserver = new MutationObserver(function () {
-        if (isExplicitEmpty()) {
+        if (isCartEmpty()) {
           setBarVisible(false);
           if (state.evalTimer) {
             try { clearTimeout(state.evalTimer); } catch (_) {}
