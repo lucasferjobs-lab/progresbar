@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-19';
+  const APP_VERSION = '2026-02-25-01';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -668,7 +668,7 @@
       setBarVisible(true);
 
       const total = getCurrentTotal();
-      if (total == null || total <= 0) {
+      if (total == null || total < 1) {
         // During cart ajax rerenders, totals can disappear or still be zero
         // momentarily even when there are items in the cart. Avoid using a
         // zero total for goal calculations, which would show “missing” equal
