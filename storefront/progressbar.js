@@ -427,8 +427,13 @@
 
     function getSubtotalNode() {
       return (
-        q('.js-subtotal-price[data-priceraw]') ||
+        // Prefer the visible cart subtotal element, which tends to be updated
+        // first when the cart changes, and only then fall back to hidden
+        // helper nodes. This reduces the chances of reading a stale zero
+        // value from a hidden subtotal while the visible one already has
+        // the correct amount.
         q('.js-ajax-cart-total.js-cart-subtotal') ||
+        q('.js-subtotal-price[data-priceraw]') ||
         q('[data-component="cart.subtotal"]') ||
         q('.js-cart-total[data-priceraw]') ||
         null
