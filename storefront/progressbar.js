@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-15';
+  const APP_VERSION = '2026-02-25-16';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -575,6 +575,43 @@
       return parseSubtotalFromText(node.textContent || '');
     }
 
+    function parseProductIdFromCartItemNode(node) {
+      if (!node || !node.getAttribute) return null;
+      const storeAttr = String(node.getAttribute('data-store') || '');
+      const m = storeAttr.match(/cart-item-(\d+)/);
+      return m ? String(m[1]) : null;
+    }
+
+    function buildDomItemsSnapshot() {
+      const container = getCartContainer();
+      const root = container && container.querySelector ? container : doc;
+      const nodes = root.querySelectorAll ? root.querySelectorAll('.js-cart-item[data-item-id]') : [];
+      if (!nodes || !nodes.length) return [];
+      const items = [];
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (!n) continue;
+        const lineId = String(n.getAttribute('data-item-id') || '').trim();
+        const productId = parseProductIdFromCartItemNode(n);
+        const qtyNode = n.querySelector ? n.querySelector('.js-cart-quantity-input,[data-component="quantity.value"]') : null;
+        const qtyRaw = qtyNode ? (qtyNode.value || qtyNode.getAttribute('value')) : null;
+        const qty = Math.max(1, Number(qtyRaw || 1) || 1);
+        const subtotalNode = n.querySelector ? n.querySelector('.js-cart-item-subtotal,[data-component="subtotal.value"]') : null;
+        const lineTotal = parseSubtotalFromText(subtotalNode ? subtotalNode.textContent : '');
+
+        if (!productId) continue;
+        items.push({
+          product_id: productId,
+          quantity: qty,
+          unit_price: lineTotal != null ? (lineTotal / qty) : 0,
+          line_total: lineTotal != null ? lineTotal : 0,
+          categories: [],
+          _line_id: lineId || null,
+        });
+      }
+      return items;
+    }
+
     function getLineItemsTotal() {
       const root = resolveCartRoot();
       const nodes = (root && root.querySelectorAll) ? root.querySelectorAll('.js-cart-item-subtotal') : [];
@@ -975,20 +1012,33 @@
     }
 
     function buildSnapshot() {
+      const total = getCurrentTotal();
+      const domItems = buildDomItemsSnapshot();
+      if (domItems && domItems.length) {
+        dbg('snapshot:dom', { total: Number(total || 0), items: domItems.length, p0: domItems[0] ? domItems[0].product_id : null }, 'debug');
+        return { total_amount: Number(total || 0), items: domItems.map(function (it) {
+          return { product_id: it.product_id, quantity: it.quantity, unit_price: it.unit_price, line_total: it.line_total, categories: it.categories };
+        }) };
+      }
+
       const c = (win.LS && win.LS.cart) || {};
       const list = Array.isArray(c.products) ? c.products : (Array.isArray(c.items) ? c.items : []);
       const items = list.map(function (item) {
-        const pid = String(item.product_id || item.id || (item.product && item.product.id) || '').trim();
+        const lineId = String(item.id || item.item_id || item.cart_item_id || item.line_item_id || item.product_id || '').trim();
+        const pidFromProductObj = (item && item.product && (item.product.id || item.product.product_id)) ? String(item.product.id || item.product.product_id).trim() : '';
+        const pid = pidFromProductObj || String(item.product_id || '').trim() || String(item.productId || '').trim() || lineId;
         const qty = Math.max(1, Number(item.quantity || 1));
         const unit = toAmount(item.unit_price || item.price || item.unitPrice || item.base_price);
         const lineRaw = item.line_total || item.subtotal || item.total || item.line_price;
         const line = toAmount(lineRaw) || (unit != null ? unit * qty : 0);
         const categories = Array.isArray(item.categories) ? item.categories.map(function (c0) { return String((c0 && c0.id) || c0); }) : [];
-        return { product_id: pid, quantity: qty, unit_price: unit != null ? unit : 0, line_total: line, categories };
+        return { product_id: pid, quantity: qty, unit_price: unit != null ? unit : 0, line_total: line, categories, _line_id: lineId || null };
       }).filter(function (i) { return i.product_id; });
 
-      const total = getCurrentTotal();
-      return { total_amount: Number(total || 0), items };
+      dbg('snapshot:ls', { total: Number(total || 0), items: items.length, p0: items[0] ? items[0].product_id : null }, 'debug');
+      return { total_amount: Number(total || 0), items: items.map(function (it) {
+        return { product_id: it.product_id, quantity: it.quantity, unit_price: it.unit_price, line_total: it.line_total, categories: it.categories };
+      }) };
     }
 
     function buildEvalKey(snapshot) {
