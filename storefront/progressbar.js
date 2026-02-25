@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-08';
+  const APP_VERSION = '2026-02-25-10';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -84,8 +84,11 @@
     if (hasItems) return false;
     if (subtotal != null && subtotal > 0) return false;
 
-    // If LS is available and says 0, treat as empty (but allow for transient states).
+    // If LS is available and says 0, only treat as empty when the theme is
+    // also showing the explicit empty view. LS can transiently reset to 0
+    // during cart rerenders even when there are items.
     if (lsCount === 0) {
+      if (!emptyVisible) return false;
       return now - lastEvidenceAt > stableMs;
     }
 
@@ -239,6 +242,9 @@
       evalTimer: null,
       evalInFlight: null,
       lastEvalKey: null,
+      lastEvalAt: 0,
+      pendingEvalSnapshot: null,
+      pendingEvalKey: null,
       raf: null,
       subtotalObserver: null,
       observedNode: null,
@@ -247,10 +253,13 @@
       modalObserver: null,
       observedModal: null,
       domObserver: null,
+      maintenanceTimer: null,
       lastRendered: null,
       forceLocalUntil: 0,
       barHiddenUntilConfig: false,
-      lastEvidenceAt: Date.now(),
+      // Timestamp of the last strong non-empty signal. Start at 0 so an empty
+      // cart does not show anything until we see evidence of items.
+      lastEvidenceAt: 0,
       keepVisibleUntil: 0,
       openPoller: null,
       lastSubtotalRaw: null,
@@ -394,7 +403,7 @@
         lastEvidenceAt: state.lastEvidenceAt,
         // Be more conservative before declaring the cart empty to avoid
         // flicker while the theme re-renders the cart and subtotal.
-        stableMs: 900,
+        stableMs: 500,
         lsCount,
         hasItems,
         subtotal,
@@ -438,12 +447,15 @@
 
         const node = getSubtotalNode();
         const raw = node && node.getAttribute ? node.getAttribute('data-priceraw') : null;
-        if (raw != null && raw !== state.lastSubtotalRaw) {
-          state.lastSubtotalRaw = raw;
-        }
+        const changed = raw != null && raw !== state.lastSubtotalRaw;
+        if (changed) state.lastSubtotalRaw = raw;
 
-        scheduleRender();
-      }, 80);
+        // Only re-render when something changed; observers handle most cases.
+        if (changed || !doc.getElementById('tn-progressbar-fill') || !doc.getElementById('tn-progressbar-text')) {
+          scheduleRender();
+          scheduleRemoteEval();
+        }
+      }, 140);
     }
 
     function getCartRoot() {
@@ -529,20 +541,19 @@
     }
 
     function getCurrentTotal() {
-      // Prefer LS-based totals (which are often updated first) and fall
-      // back to DOM-based subtotals. This makes the very first render
-      // after adding products much more reliable across themes.
-      const fromLs = getLsTotal();
-      if (fromLs != null && fromLs > 0) return Number(fromLs);
-
+      // Prefer DOM subtotal: it matches what the shopper sees and tends to
+      // be the most reliable after Tiendanube rerenders the cart.
       const fromDom = getSubtotalAmount();
       if (fromDom != null && fromDom > 0) return Number(fromDom);
+
+      // Fallback to LS for the "just added" case where DOM still shows 0.
+      const fromLs = getLsTotal();
+      if (fromLs != null && fromLs > 0) return Number(fromLs);
 
       const fromLines = getLineItemsTotal();
       if (fromLines != null && fromLines > 0) return Number(fromLines);
 
-      // As a last resort, return whatever LS reported (even if 0/null),
-      // so that callers can decide how to behave on missing totals.
+      if (fromDom != null) return Number(fromDom);
       if (fromLs != null) return Number(fromLs);
       return null;
     }
@@ -571,34 +582,25 @@
       ].join('');
 
       const root = container;
-      const cartList = root.querySelector ? root.querySelector('.js-ajax-cart-list') : null;
-      if (cartList) {
-        // Insert before the modal body so it survives list/body rerenders.
-        const panel = root.querySelector ? root.querySelector('.js-ajax-cart-panel') : null;
-        const body = (panel || root).querySelector ? (panel || root).querySelector('.modal-body') : null;
-        if (body && body.parentNode) {
-          body.parentNode.insertBefore(wrapper, body);
-          dbg('mount:ok', { at: 'before_body' });
-          return wrapper;
-        }
-        if (cartList.parentNode) {
-          cartList.parentNode.insertBefore(wrapper, cartList);
-          dbg('mount:ok', { at: 'before_list' });
-          return wrapper;
-        }
+      const panel = root.querySelector ? root.querySelector('.js-ajax-cart-panel') : null;
+      const body = (panel || root).querySelector ? (panel || root).querySelector('.modal-body') : null;
+      const cartList = body && body.querySelector ? body.querySelector('.js-ajax-cart-list') : (root.querySelector ? root.querySelector('.js-ajax-cart-list') : null);
+      if (body && cartList && cartList.parentNode) {
+        // Prefer inside the cart body, right above products.
+        cartList.parentNode.insertBefore(wrapper, cartList);
+        dbg('mount:ok', { at: 'before_list' });
+        return wrapper;
+      }
+      if (body) {
+        body.insertBefore(wrapper, body.firstChild);
+        dbg('mount:ok', { at: 'inside_body' });
+        return wrapper;
       }
 
       const subtotalRow = root.querySelector ? root.querySelector('[data-store="cart-subtotal"]') : null;
       if (subtotalRow && subtotalRow.parentNode) {
         subtotalRow.parentNode.insertBefore(wrapper, subtotalRow);
         dbg('mount:ok', { at: 'before_subtotal' });
-        return wrapper;
-      }
-
-      const modalBody = root.querySelector ? root.querySelector('.modal-body') : null;
-      if (modalBody) {
-        modalBody.insertBefore(wrapper, modalBody.firstChild);
-        dbg('mount:ok', { at: 'inside_body' });
         return wrapper;
       }
 
@@ -703,7 +705,16 @@
       if (isCartEmpty()) {
         // Keep DOM node to avoid flicker; just hide it.
         setBarVisible(false);
-        dbg('render:empty', null);
+        dbg('render:empty', {
+          keepMsLeft: Math.max(0, (state.keepVisibleUntil || 0) - Date.now()),
+          lsCount: getLsItemCount(),
+          hasItems: hasCartItems(),
+          subtotal: getSubtotalAmount(),
+          emptyVisible: (function () {
+            const emptyState = q('.js-empty-ajax-cart');
+            return !!(emptyState && isVisible(emptyState));
+          })(),
+        });
         state.barHiddenUntilConfig = false;
         if (state.evalTimer) {
           try { clearTimeout(state.evalTimer); } catch (_) {}
@@ -724,11 +735,19 @@
       let fill = doc.getElementById('tn-progressbar-fill');
       let text = doc.getElementById('tn-progressbar-text');
       if (!fill || !text) {
-        // Cart rerenders can destroy our inner nodes momentarily. Recreate once.
+        // Cart rerenders can temporarily wipe our inner nodes. Repair in-place.
         dbg('render:missing_nodes', null);
-        try { removeBar(); } catch (_) {}
-        const w2 = ensureBarMounted();
-        if (!w2) return;
+        try {
+          const w = doc.getElementById('app-barra-progreso');
+          if (w) {
+            w.innerHTML = [
+              '<div class="tn-progressbar__text" id="tn-progressbar-text">&nbsp;</div>',
+              '<div class="tn-progressbar__track">',
+              '  <div class="tn-progressbar__fill" id="tn-progressbar-fill"></div>',
+              '</div>',
+            ].join('');
+          }
+        } catch (_) {}
         fill = doc.getElementById('tn-progressbar-fill');
         text = doc.getElementById('tn-progressbar-text');
         if (!fill || !text) return;
@@ -840,7 +859,7 @@
       return parts.join('|');
     }
 
-    async function evaluateRemote() {
+    function scheduleRemoteEval() {
       if (!detectStoreId()) return;
       if (isCartEmpty()) return;
       if (!requiresRemoteEvaluation(state.config)) {
@@ -850,35 +869,63 @@
 
       const snapshot = buildSnapshot();
       const evalKey = buildEvalKey(snapshot);
-      if (state.lastEvalKey === evalKey && state.evalInFlight) return;
-      state.lastEvalKey = evalKey;
+      const now = Date.now();
+      if (state.lastRemote && state.lastEvalKey === evalKey && now - (state.lastEvalAt || 0) < 800) return;
 
-      if (state.evalTimer) clearTimeout(state.evalTimer);
-      // Use a very small debounce so that evaluation feels instant
-      // while still coalescing rapid bursts of changes.
-      state.evalTimer = setTimeout(async function () {
-        try {
-          if (state.evalInFlight) {
-            try { state.evalInFlight.abort(); } catch (_) {}
-          }
-          const controller = new AbortController();
-          state.evalInFlight = controller;
-          const abortTimer = setTimeout(function () { controller.abort(); }, 1200);
-          const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
-            method: 'POST',
-            // Avoid CORS preflight: application/json triggers OPTIONS.
-            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-            body: JSON.stringify(snapshot),
-            signal: controller.signal,
-          });
-          clearTimeout(abortTimer);
-          if (state.evalInFlight === controller) state.evalInFlight = null;
-          if (!res.ok) return;
-          const data = await res.json();
-          state.lastRemote = data;
-          renderNow();
-        } catch (_) {}
-      }, 20);
+      state.pendingEvalSnapshot = snapshot;
+      state.pendingEvalKey = evalKey;
+
+      // Don't thrash: wait for the in-flight request to finish, then run again.
+      if (state.evalInFlight) return;
+
+      // Debounce to coalesce DOM mutation bursts.
+      if (state.evalTimer) return;
+      state.evalTimer = setTimeout(runRemoteEval, 180);
+    }
+
+    async function runRemoteEval() {
+      if (state.evalTimer) {
+        try { clearTimeout(state.evalTimer); } catch (_) {}
+        state.evalTimer = null;
+      }
+
+      const snapshot = state.pendingEvalSnapshot;
+      const evalKey = state.pendingEvalKey;
+      state.pendingEvalSnapshot = null;
+      state.pendingEvalKey = null;
+
+      if (!snapshot || !evalKey) return;
+      if (!detectStoreId()) return;
+      if (isCartEmpty()) return;
+      if (!requiresRemoteEvaluation(state.config)) return;
+
+      try {
+        const controller = new AbortController();
+        state.evalInFlight = controller;
+        state.lastEvalAt = Date.now();
+        state.lastEvalKey = evalKey;
+
+        const abortTimer = setTimeout(function () { controller.abort(); }, 1400);
+        const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
+          method: 'POST',
+          // Avoid CORS preflight: application/json triggers OPTIONS.
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(snapshot),
+          signal: controller.signal,
+        });
+        clearTimeout(abortTimer);
+        if (state.evalInFlight === controller) state.evalInFlight = null;
+        if (!res.ok) return;
+        const data = await res.json();
+        state.lastRemote = data;
+        renderNow();
+      } catch (_) {
+        // ignore
+      } finally {
+        state.evalInFlight = null;
+        // If something changed while we were in-flight, schedule again.
+        if (state.pendingEvalSnapshot) scheduleRemoteEval();
+      }
     }
 
     async function loadConfig(force) {
@@ -901,7 +948,7 @@
           }
         } catch (_) {}
         renderNow();
-        evaluateRemote();
+        scheduleRemoteEval();
       } catch (_) {}
     }
 
@@ -915,7 +962,7 @@
       state.observedNode = node;
       state.subtotalObserver = new MutationObserver(function () {
         scheduleRender();
-        evaluateRemote();
+        scheduleRemoteEval();
       });
       state.subtotalObserver.observe(node, {
         attributes: true,
@@ -940,7 +987,7 @@
           // Themes often update totals by mutating data-priceraw on hidden nodes.
           if (t.getAttribute && t.getAttribute('data-priceraw') != null) {
             scheduleRender();
-            evaluateRemote();
+            scheduleRemoteEval();
             return;
           }
         }
@@ -962,10 +1009,7 @@
       state.observedModal = modal;
       state.modalObserver = new MutationObserver(function () {
         try {
-          maybeStartCartOpenPoll();
-          ensureBarMounted();
-          if (isCartOpen()) startBurst(1800);
-          scheduleRender();
+          scheduleMaintenance();
         } catch (_) {}
       });
       state.modalObserver.observe(modal, {
@@ -974,17 +1018,28 @@
       });
     }
 
+    function scheduleMaintenance() {
+      if (state.maintenanceTimer) return;
+      state.maintenanceTimer = setTimeout(function () {
+        state.maintenanceTimer = null;
+        try {
+          ensureBarMounted();
+          bindSubtotalObserver();
+          bindCartObserver();
+          bindModalObserver();
+          maybeStartCartOpenPoll();
+          patchLsCartMethods();
+          if (isCartOpen()) startBurst(1400);
+          scheduleRender();
+          scheduleRemoteEval();
+        } catch (_) {}
+      }, 60);
+    }
+
     function bindDomObserver() {
       if (state.domObserver) return;
       state.domObserver = new MutationObserver(function () {
-        ensureBarMounted();
-        bindSubtotalObserver();
-        bindCartObserver();
-        bindModalObserver();
-        maybeStartCartOpenPoll();
-        patchLsCartMethods();
-        if (getCartContainer()) startBurst(1200);
-        scheduleRender();
+        scheduleMaintenance();
       });
       state.domObserver.observe(doc.body, { childList: true, subtree: true });
     }
@@ -995,14 +1050,17 @@
       const end = Date.now() + 1400;
       state.forceLocalUntil = Date.now() + 1600;
       state.keepVisibleUntil = Date.now() + Math.max(0, keepMs);
+      // Consider this an "activity" signal to avoid empty-flicker while the cart rerenders.
+      state.lastEvidenceAt = Date.now();
       maybeStartCartOpenPoll();
       startBurst(Math.max(1500, keepMs));
       const tick = function () {
         scheduleRender();
-        evaluateRemote();
         if (Date.now() < end) setTimeout(tick, 70);
       };
       tick();
+      // Remote evaluation is debounced; one trigger per pulse is enough.
+      scheduleRemoteEval();
     }
 
     function patchLsCartMethods() {
@@ -1062,7 +1120,7 @@
 
     doc.addEventListener('cart:updated', function () {
       scheduleRender();
-      evaluateRemote();
+      scheduleRemoteEval();
     });
 
     doc.addEventListener('click', function (event) {
@@ -1091,6 +1149,17 @@
     loadConfig(true).catch(function () {});
     maybeStartCartOpenPoll();
     patchLsCartMethods();
+    // Patch LS early even if it boots late: makes 0->1 add-to-cart stable.
+    (function patchLsEarly() {
+      let tries = 0;
+      const t = setInterval(function () {
+        tries += 1;
+        try { patchLsCartMethods(); } catch (_) {}
+        if (tries >= 50) {
+          try { clearInterval(t); } catch (_) {}
+        }
+      }, 250);
+    })();
 
     // Store id can arrive late (LS boot). Keep trying briefly.
     (function waitForStoreId() {

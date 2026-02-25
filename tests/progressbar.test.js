@@ -102,6 +102,14 @@ test('decideEmpty never empty when subtotal > 0', () => {
   );
 });
 
+test('decideEmpty does not treat lsCount=0 as empty without explicit empty view', () => {
+  const now = Date.now();
+  assert.strictEqual(
+    logic.decideEmpty({ now, lastEvidenceAt: now - 10_000, stableMs: 300, lsCount: 0, hasItems: false, subtotal: 0, emptyVisible: false }),
+    false
+  );
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }
