@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 
 const express = require('express');
 const axios = require('axios');
@@ -351,8 +351,14 @@ function normalizeCartPayload(payload) {
     };
   }).filter((i) => i.product_id);
 
-  const total = toNumberOrNull(raw.total_amount);
   const computedTotal = items.reduce((acc, i) => acc + (toNumberOrNull(i.line_total) || 0), 0);
+  let total = toNumberOrNull(raw.total_amount);
+  // If the client sends a zero/empty total but line items have valid
+  // amounts, prefer the computed total so that goals are evaluated
+  // correctly even on the very first cart render.
+  if (total == null || total <= 0) {
+    total = computedTotal;
+  }
 
   return {
     total_amount: total != null ? total : computedTotal,
