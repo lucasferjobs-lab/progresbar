@@ -2,7 +2,7 @@
   if (window.__TN_PROGRESSBAR_BOOTSTRAPPED__) return;
   window.__TN_PROGRESSBAR_BOOTSTRAPPED__ = true;
 
-  const BUILD_VERSION = '2026-02-25-10';
+  const BUILD_VERSION = '2026-02-25-11';
   window.__TN_PROGRESSBAR_VERSION__ = BUILD_VERSION;
 
   const currentScript = document.currentScript;
@@ -63,6 +63,7 @@
       if (window.sessionStorage) window.sessionStorage.setItem(lockKey, String(now));
     } catch (_) {}
 
+    const startedAt = Date.now();
     fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' })
       .then((r) => (r && r.ok ? r.json() : null))
       .then((data) => {
@@ -70,8 +71,19 @@
         try {
           if (window.localStorage) window.localStorage.setItem(cacheKey, JSON.stringify(data));
         } catch (_) {}
+        try {
+          if (window.console && typeof window.console.debug === 'function') {
+            window.console.debug('[ProgressBar] prefetch:ok', { storeId, ms: Date.now() - startedAt });
+          }
+        } catch (_) {}
       })
-      .catch(() => {});
+      .catch(() => {
+        try {
+          if (window.console && typeof window.console.debug === 'function') {
+            window.console.debug('[ProgressBar] prefetch:fail', { storeId, ms: Date.now() - startedAt });
+          }
+        } catch (_) {}
+      });
 
     return true;
   }

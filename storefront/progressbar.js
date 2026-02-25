@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-10';
+  const APP_VERSION = '2026-02-25-11';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -228,6 +228,7 @@
     const srcUrl = scriptSrc ? new URL(scriptSrc) : null;
     const baseUrl = srcUrl ? srcUrl.origin : win.location.origin;
     let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
+    const bootAt = Date.now();
 
     if (win.console && typeof win.console.info === 'function') {
       win.console.info('[ProgressBar] app version:', APP_VERSION, 'store:', storeId || 'unknown');
@@ -269,6 +270,8 @@
 
     const debugEnabled = (function () {
       try {
+        if (srcUrl && srcUrl.searchParams && srcUrl.searchParams.get('debug') === '1') return true;
+        if (srcUrl && srcUrl.searchParams && srcUrl.searchParams.get('tn_progressbar_debug') === '1') return true;
         return !!(win.localStorage && win.localStorage.getItem('tn_progressbar_debug') === '1');
       } catch (_) {
         return false;
@@ -277,14 +280,15 @@
 
     const debugLog = [];
 
-    function dbg(event, details) {
+    function dbg(event, details, level) {
       if (!debugEnabled) return;
       try {
-        debugLog.push({ t: Date.now(), event: String(event || ''), details: details || null });
-        if (debugLog.length > 200) debugLog.shift();
-        if (win.console && typeof win.console.debug === 'function') {
-          win.console.debug('[ProgressBar]', event, details || '');
-        }
+        const t = Date.now();
+        debugLog.push({ t, dt: t - bootAt, event: String(event || ''), details: details || null });
+        if (debugLog.length > 400) debugLog.shift();
+        const lvl = String(level || 'debug');
+        const logger = (win.console && (win.console[lvl] || win.console.debug || win.console.log)) || null;
+        if (typeof logger === 'function') logger.call(win.console, '[ProgressBar]', event, details || '');
       } catch (_) {}
     }
 
@@ -292,6 +296,27 @@
       win.__TN_PROGRESSBAR_DEBUG__ = {
         enabled: debugEnabled,
         dump: function () { return debugLog.slice(); },
+        state: function () {
+          try {
+            return {
+              app_version: APP_VERSION,
+              store_id: detectStoreId(),
+              config_loaded: !!state.configLoaded,
+              has_config: !!state.config,
+              last_evidence_ms_ago: state.lastEvidenceAt ? Date.now() - state.lastEvidenceAt : null,
+              keep_visible_ms_left: Math.max(0, (state.keepVisibleUntil || 0) - Date.now()),
+              last_subtotal_raw: state.lastSubtotalRaw,
+              last_rendered: state.lastRendered,
+              has_last_remote: !!state.lastRemote,
+              last_eval_key: state.lastEvalKey,
+              eval_in_flight: !!state.evalInFlight,
+              eval_timer: !!state.evalTimer,
+              pending_eval: !!state.pendingEvalSnapshot,
+            };
+          } catch (_) {
+            return null;
+          }
+        },
       };
     } catch (_) {}
 
@@ -301,6 +326,7 @@
         const fromLs = win.LS && win.LS.store && (win.LS.store.id || win.LS.store.store_id);
         if (fromLs) {
           storeId = String(fromLs);
+          dbg('store_id:resolved', { via: 'LS.store', storeId }, 'info');
           return storeId;
         }
       } catch (_) {}
@@ -308,6 +334,7 @@
         const fromGlobal = win.Store && (win.Store.id || win.Store.store_id);
         if (fromGlobal) {
           storeId = String(fromGlobal);
+          dbg('store_id:resolved', { via: 'Store', storeId }, 'info');
           return storeId;
         }
       } catch (_) {}
@@ -325,6 +352,7 @@
         state.configLoaded = true;
         // Cached config is safe to render (it's already customized); refresh in background.
         state.freshConfig = true;
+        dbg('config:cache_hit', { bytes: String(cached || '').length }, 'info');
       }
     } catch (_) {}
 
@@ -398,7 +426,7 @@
         state.lastEvidenceAt = Date.now();
       }
 
-      return decideEmpty({
+      const empty = decideEmpty({
         now: Date.now(),
         lastEvidenceAt: state.lastEvidenceAt,
         // Be more conservative before declaring the cart empty to avoid
@@ -409,6 +437,17 @@
         subtotal,
         emptyVisible,
       });
+
+      // Only log when "empty-ness" changes (avoids console spam).
+      if (debugEnabled) {
+        const prev = state._lastEmpty;
+        if (prev == null || prev !== empty) {
+          state._lastEmpty = empty;
+          dbg('empty:state', { empty, lsCount, hasItems, subtotal, emptyVisible, stableMs: 500 }, 'info');
+        }
+      }
+
+      return empty;
     }
 
     function isCartOpen() {
@@ -561,6 +600,7 @@
     function ensureBarMounted() {
       let existing = doc.getElementById('app-barra-progreso');
       if (existing && !doc.body.contains(existing)) {
+        dbg('mount:detached', null, 'warn');
         existing = null;
       }
       if (existing) return existing;
@@ -702,6 +742,7 @@
     }
 
     function renderNow() {
+      dbg('render:call', { open: isCartOpen() }, 'debug');
       if (isCartEmpty()) {
         // Keep DOM node to avoid flicker; just hide it.
         setBarVisible(false);
@@ -714,7 +755,7 @@
             const emptyState = q('.js-empty-ajax-cart');
             return !!(emptyState && isVisible(emptyState));
           })(),
-        });
+        }, 'info');
         state.barHiddenUntilConfig = false;
         if (state.evalTimer) {
           try { clearTimeout(state.evalTimer); } catch (_) {}
@@ -736,7 +777,7 @@
       let text = doc.getElementById('tn-progressbar-text');
       if (!fill || !text) {
         // Cart rerenders can temporarily wipe our inner nodes. Repair in-place.
-        dbg('render:missing_nodes', null);
+        dbg('render:missing_nodes', null, 'warn');
         try {
           const w = doc.getElementById('app-barra-progreso');
           if (w) {
@@ -758,6 +799,7 @@
       setBarVisible(true);
 
       const total = getCurrentTotal();
+      dbg('render:total', { total }, 'debug');
       if (total == null || total < 1) {
         // During cart ajax rerenders, totals can disappear or still be zero
         // momentarily even when there are items in the cart. Avoid using a
@@ -775,6 +817,7 @@
       }
 
       const result = buildUiResult(total);
+      dbg('render:ui', { hasResult: !!result }, 'debug');
       if (!result) {
         // When the cart is not empty but there is no specific rule to show
         // (or config is in an intermediate state), keep the bar visible with
@@ -796,6 +839,7 @@
       fill.style.backgroundColor = result.color || '#2563eb';
       text.innerHTML = result.message || '&nbsp;';
       state.lastRendered = result;
+      dbg('render:done', { pct: result.pct, color: result.color }, 'info');
     }
 
     function scheduleRender() {
@@ -874,6 +918,7 @@
 
       state.pendingEvalSnapshot = snapshot;
       state.pendingEvalKey = evalKey;
+      dbg('eval:schedule', { total: snapshot.total_amount, items: (snapshot.items || []).length, evalKey }, 'debug');
 
       // Don't thrash: wait for the in-flight request to finish, then run again.
       if (state.evalInFlight) return;
@@ -905,6 +950,7 @@
         state.lastEvalAt = Date.now();
         state.lastEvalKey = evalKey;
 
+        const startedAt = Date.now();
         const abortTimer = setTimeout(function () { controller.abort(); }, 1400);
         const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
           method: 'POST',
@@ -915,6 +961,7 @@
         });
         clearTimeout(abortTimer);
         if (state.evalInFlight === controller) state.evalInFlight = null;
+        dbg('eval:resp', { ok: !!(res && res.ok), status: res ? res.status : null, ms: Date.now() - startedAt }, 'debug');
         if (!res.ok) return;
         const data = await res.json();
         state.lastRemote = data;
@@ -936,7 +983,10 @@
       state.lastConfigFetchAt = now;
 
       try {
+        const startedAt = Date.now();
+        dbg('config:fetch', { force: !!force }, 'debug');
         const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' });
+        dbg('config:resp', { ok: !!(res && res.ok), status: res ? res.status : null, ms: Date.now() - startedAt }, 'debug');
         if (!res.ok) return;
         const data = await res.json();
         state.config = data || null;
@@ -1020,8 +1070,10 @@
 
     function scheduleMaintenance() {
       if (state.maintenanceTimer) return;
+      dbg('maintenance:schedule', null, 'debug');
       state.maintenanceTimer = setTimeout(function () {
         state.maintenanceTimer = null;
+        dbg('maintenance:run', { open: isCartOpen() }, 'debug');
         try {
           ensureBarMounted();
           bindSubtotalObserver();
@@ -1047,11 +1099,13 @@
     function pulseRefresh(options) {
       const keepMsRaw = options && options.keepMs;
       const keepMs = Number.isFinite(Number(keepMsRaw)) ? Number(keepMsRaw) : 3500;
+      const reason = (options && options.reason) ? String(options.reason) : 'pulse';
       const end = Date.now() + 1400;
       state.forceLocalUntil = Date.now() + 1600;
       state.keepVisibleUntil = Date.now() + Math.max(0, keepMs);
       // Consider this an "activity" signal to avoid empty-flicker while the cart rerenders.
       state.lastEvidenceAt = Date.now();
+      dbg('pulse', { reason, keepMs }, 'info');
       maybeStartCartOpenPoll();
       startBurst(Math.max(1500, keepMs));
       const tick = function () {
@@ -1086,27 +1140,28 @@
         if (fn.__tnProgressbarWrapped) return;
 
         function wrapped() {
+          dbg('ls:call', { name }, 'debug');
           let out;
           try {
             out = fn.apply(LS, arguments);
           } catch (err) {
             try {
               const keepMs = (name === 'removeItem' || name === 'removeProduct') ? 0 : 4500;
-              pulseRefresh({ keepMs });
+              pulseRefresh({ keepMs, reason: `ls:${name}:throw` });
             } catch (_) {}
             throw err;
           }
 
           try {
             const keepMs = (name === 'removeItem' || name === 'removeProduct') ? 0 : 4500;
-            pulseRefresh({ keepMs });
+            pulseRefresh({ keepMs, reason: `ls:${name}` });
           } catch (_) {}
 
           if (out && typeof out.then === 'function') {
             return out.finally(function () {
               try {
                 const keepMs = (name === 'removeItem' || name === 'removeProduct') ? 0 : 4500;
-                pulseRefresh({ keepMs });
+                pulseRefresh({ keepMs, reason: `ls:${name}:finally` });
               } catch (_) {}
             });
           }
@@ -1123,19 +1178,28 @@
       scheduleRemoteEval();
     });
 
+    // 0 -> 1 flow: add-to-cart usually submits /comprar/. Kick a pulse to keep
+    // the bar stable while Tiendanube re-renders the cart via AJAX.
+    doc.addEventListener('submit', function (event) {
+      const form = event && event.target;
+      const action = form && form.action ? String(form.action) : '';
+      if (!action || action.indexOf('/comprar') === -1) return;
+      pulseRefresh({ keepMs: 5000, reason: 'submit:/comprar' });
+    }, true);
+
     doc.addEventListener('click', function (event) {
       const target = event && event.target;
       if (!target) return;
       const ctrl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
       if (!ctrl) return;
-      pulseRefresh();
+      pulseRefresh({ reason: 'click:qty' });
     }, true);
 
     doc.addEventListener('input', function (event) {
       const target = event && event.target;
       if (!target) return;
       if (target.classList && target.classList.contains('js-cart-quantity-input')) {
-        pulseRefresh();
+        pulseRefresh({ reason: 'input:qty' });
       }
     }, true);
 
@@ -1145,6 +1209,8 @@
     bindModalObserver();
     bindDomObserver();
     renderNow();
+
+    dbg('boot', { app: APP_VERSION, baseUrl, storeId: storeId || null, debug: debugEnabled }, 'info');
 
     loadConfig(true).catch(function () {});
     maybeStartCartOpenPoll();
