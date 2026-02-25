@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-24-11';
+  const APP_VERSION = '2026-02-24-12';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -224,7 +224,6 @@
       lastRendered: null,
       forceLocalUntil: 0,
       barHiddenUntilConfig: false,
-      suppressEmptyUntil: 0,
     };
 
     function detectStoreId() {
@@ -307,15 +306,22 @@
     }
 
     function isCartEmpty() {
-      if (Date.now() < state.suppressEmptyUntil) return false;
-      // Prefer LS.cart (real state) to avoid transient DOM rerenders.
+      // Robust empty detection: only hide when we are sure it's empty.
+      // Tiendanube can transiently reset LS/DOM during rerenders.
       const lsCount = getLsItemCount();
-      if (lsCount === 0) return true;
       if (lsCount != null && lsCount > 0) return false;
+      if (hasCartItems()) return false;
+
+      const subtotal = getSubtotalAmount();
+      if (subtotal != null && subtotal > 0) return false;
 
       const emptyState = q('.js-empty-ajax-cart');
       const emptyVisible = !!(emptyState && isVisible(emptyState));
-      return emptyVisible && !hasCartItems();
+      if (lsCount === 0 && emptyVisible) return true;
+      if (emptyVisible) return true;
+
+      // Unknown state: treat as NOT empty to avoid flicker.
+      return false;
     }
 
     function getCartRoot() {
@@ -724,7 +730,6 @@
     function pulseRefresh() {
       const end = Date.now() + 1400;
       state.forceLocalUntil = Date.now() + 1600;
-      state.suppressEmptyUntil = Math.max(state.suppressEmptyUntil, Date.now() + 2200);
       const tick = function () {
         scheduleRender();
         evaluateRemote();
@@ -734,7 +739,6 @@
     }
 
     doc.addEventListener('cart:updated', function () {
-      state.suppressEmptyUntil = Math.max(state.suppressEmptyUntil, Date.now() + 900);
       scheduleRender();
       evaluateRemote();
     });
@@ -742,8 +746,6 @@
     doc.addEventListener('click', function (event) {
       const target = event && event.target;
       if (!target) return;
-      const removeBtn = target.closest ? target.closest('[data-component="line-item.remove"],.js-cart-item-remove,.js-cart-item-delete') : null;
-      if (removeBtn) return;
       const ctrl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
       if (!ctrl) return;
       pulseRefresh();
