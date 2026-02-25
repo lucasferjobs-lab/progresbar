@@ -668,14 +668,18 @@
       setBarVisible(true);
 
       const total = getCurrentTotal();
-      if (total == null) {
-        // During cart ajax rerenders, totals can disappear momentarily.
-        // Keep the last rendered state instead of flashing/hiding.
-        if (state.lastRendered) {
-          fill.style.width = `${clampPct(state.lastRendered.pct)}%`;
-          fill.style.background = state.lastRendered.color || '#2563eb';
-          text.innerHTML = state.lastRendered.message || '&nbsp;';
-        }
+      if (total == null || total <= 0) {
+        // During cart ajax rerenders, totals can disappear or still be zero
+        // momentarily even when there are items in the cart. Avoid using a
+        // zero total for goal calculations, which would show “missing” equal
+        // to the full threshold and a visually “broken” bar. Instead, keep
+        // the last rendered state (or a neutral placeholder) until a valid
+        // total is available.
+        const fallback = state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
+        fill.style.width = `${clampPct(fallback.pct)}%`;
+        fill.style.background = fallback.color || '#2563eb';
+        text.innerHTML = fallback.message || '&nbsp;';
+        state.lastRendered = fallback;
         return;
       }
 
