@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-05';
+  const APP_VERSION = '2026-02-25-08';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -254,7 +254,37 @@
       keepVisibleUntil: 0,
       openPoller: null,
       lastSubtotalRaw: null,
+      burstInterval: null,
+      burstUntil: 0,
     };
+
+    const debugEnabled = (function () {
+      try {
+        return !!(win.localStorage && win.localStorage.getItem('tn_progressbar_debug') === '1');
+      } catch (_) {
+        return false;
+      }
+    })();
+
+    const debugLog = [];
+
+    function dbg(event, details) {
+      if (!debugEnabled) return;
+      try {
+        debugLog.push({ t: Date.now(), event: String(event || ''), details: details || null });
+        if (debugLog.length > 200) debugLog.shift();
+        if (win.console && typeof win.console.debug === 'function') {
+          win.console.debug('[ProgressBar]', event, details || '');
+        }
+      } catch (_) {}
+    }
+
+    try {
+      win.__TN_PROGRESSBAR_DEBUG__ = {
+        enabled: debugEnabled,
+        dump: function () { return debugLog.slice(); },
+      };
+    } catch (_) {}
 
     function detectStoreId() {
       if (storeId) return storeId;
@@ -518,11 +548,17 @@
     }
 
     function ensureBarMounted() {
-      const existing = doc.getElementById('app-barra-progreso');
+      let existing = doc.getElementById('app-barra-progreso');
+      if (existing && !doc.body.contains(existing)) {
+        existing = null;
+      }
       if (existing) return existing;
 
       const container = getCartContainer();
-      if (!container) return null;
+      if (!container) {
+        dbg('mount:missing_container', null);
+        return null;
+      }
 
       const wrapper = doc.createElement('div');
       wrapper.id = 'app-barra-progreso';
@@ -542,10 +578,12 @@
         const body = (panel || root).querySelector ? (panel || root).querySelector('.modal-body') : null;
         if (body && body.parentNode) {
           body.parentNode.insertBefore(wrapper, body);
+          dbg('mount:ok', { at: 'before_body' });
           return wrapper;
         }
         if (cartList.parentNode) {
           cartList.parentNode.insertBefore(wrapper, cartList);
+          dbg('mount:ok', { at: 'before_list' });
           return wrapper;
         }
       }
@@ -553,18 +591,24 @@
       const subtotalRow = root.querySelector ? root.querySelector('[data-store="cart-subtotal"]') : null;
       if (subtotalRow && subtotalRow.parentNode) {
         subtotalRow.parentNode.insertBefore(wrapper, subtotalRow);
+        dbg('mount:ok', { at: 'before_subtotal' });
         return wrapper;
       }
 
       const modalBody = root.querySelector ? root.querySelector('.modal-body') : null;
       if (modalBody) {
         modalBody.insertBefore(wrapper, modalBody.firstChild);
+        dbg('mount:ok', { at: 'inside_body' });
         return wrapper;
       }
 
       const anchor = getSubtotalNode() || (root.querySelector ? root.querySelector('.js-cart-item') : null);
-      if (!anchor || !anchor.parentNode) return null;
+      if (!anchor || !anchor.parentNode) {
+        dbg('mount:no_anchor', null);
+        return null;
+      }
       anchor.parentNode.insertBefore(wrapper, anchor);
+      dbg('mount:ok', { at: 'anchor' });
       return wrapper;
     }
 
@@ -659,6 +703,7 @@
       if (isCartEmpty()) {
         // Keep DOM node to avoid flicker; just hide it.
         setBarVisible(false);
+        dbg('render:empty', null);
         state.barHiddenUntilConfig = false;
         if (state.evalTimer) {
           try { clearTimeout(state.evalTimer); } catch (_) {}
@@ -671,11 +716,23 @@
         return;
       }
       const wrapper = ensureBarMounted();
-      if (!wrapper) return;
+      if (!wrapper) {
+        dbg('render:no_wrapper', null);
+        return;
+      }
 
-      const fill = doc.getElementById('tn-progressbar-fill');
-      const text = doc.getElementById('tn-progressbar-text');
-      if (!fill || !text) return;
+      let fill = doc.getElementById('tn-progressbar-fill');
+      let text = doc.getElementById('tn-progressbar-text');
+      if (!fill || !text) {
+        // Cart rerenders can destroy our inner nodes momentarily. Recreate once.
+        dbg('render:missing_nodes', null);
+        try { removeBar(); } catch (_) {}
+        const w2 = ensureBarMounted();
+        if (!w2) return;
+        fill = doc.getElementById('tn-progressbar-fill');
+        text = doc.getElementById('tn-progressbar-text');
+        if (!fill || !text) return;
+      }
 
       // Always force visible when cart is not empty.
       state.barHiddenUntilConfig = false;
@@ -691,7 +748,8 @@
         // total is available.
         const fallback = state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
         fill.style.width = `${clampPct(fallback.pct)}%`;
-        fill.style.background = fallback.color || '#2563eb';
+        fill.style.backgroundImage = 'none';
+        fill.style.backgroundColor = fallback.color || '#2563eb';
         text.innerHTML = fallback.message || '&nbsp;';
         state.lastRendered = fallback;
         return;
@@ -727,6 +785,28 @@
         state.raf = null;
         renderNow();
       });
+    }
+
+    function startBurst(ms) {
+      const until = Date.now() + Math.max(0, Number(ms || 0));
+      state.burstUntil = Math.max(state.burstUntil || 0, until);
+      if (state.burstInterval) return;
+
+      dbg('burst:start', { ms });
+      state.burstInterval = setInterval(function () {
+        if (Date.now() > state.burstUntil) {
+          try { clearInterval(state.burstInterval); } catch (_) {}
+          state.burstInterval = null;
+          dbg('burst:stop', null);
+          return;
+        }
+        try {
+          patchLsCartMethods();
+          ensureBarMounted();
+          maybeStartCartOpenPoll();
+          scheduleRender();
+        } catch (_) {}
+      }, 80);
     }
 
     function buildSnapshot() {
@@ -884,6 +964,7 @@
         try {
           maybeStartCartOpenPoll();
           ensureBarMounted();
+          if (isCartOpen()) startBurst(1800);
           scheduleRender();
         } catch (_) {}
       });
@@ -902,6 +983,7 @@
         bindModalObserver();
         maybeStartCartOpenPoll();
         patchLsCartMethods();
+        if (getCartContainer()) startBurst(1200);
         scheduleRender();
       });
       state.domObserver.observe(doc.body, { childList: true, subtree: true });
@@ -914,6 +996,7 @@
       state.forceLocalUntil = Date.now() + 1600;
       state.keepVisibleUntil = Date.now() + Math.max(0, keepMs);
       maybeStartCartOpenPoll();
+      startBurst(Math.max(1500, keepMs));
       const tick = function () {
         scheduleRender();
         evaluateRemote();
@@ -1052,5 +1135,3 @@
     init,
   };
 });
-
-
