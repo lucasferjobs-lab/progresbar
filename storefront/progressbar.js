@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-26-11';
+  const APP_VERSION = '2026-02-26-12';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -543,9 +543,10 @@
       const strongEmpty = emptyVisible && !hasItems && !hasEvidence;
 
       // During quantity changes, Tiendanube can briefly show the empty view.
-      // Keep the bar visible during that transient window, but allow the cart
-      // to become empty when the empty state is strongly visible.
-      if (now < state.keepVisibleUntil && !strongEmpty) return false;
+      // During add-to-cart and rerenders, the theme can temporarily display the
+      // empty view even when the cart already has items. keepVisibleUntil is only
+      // set on user/cart activity, so trust it to avoid delayed mounting/flicker.
+      if (now < state.keepVisibleUntil) return false;
 
       if (hasEvidence) {
         state.lastEvidenceAt = now;
@@ -958,8 +959,11 @@
     function sumEligibleForProduct(productId) {
       const pid = String(productId || '').trim();
       if (!pid) return { qty: 0, subtotal: 0 };
-      const items = buildDomItemsSnapshot();
-      if (!items || !items.length) return { qty: 0, subtotal: 0 };
+      // Use the same snapshot strategy as remote-eval: DOM when available, LS
+      // fallback when the theme hasn't rendered items yet (0->1 flow).
+      const snap = buildSnapshot();
+      const items = snap && Array.isArray(snap.items) ? snap.items : [];
+      if (!items.length) return { qty: 0, subtotal: 0 };
       let qty = 0;
       let subtotal = 0;
       for (let i = 0; i < items.length; i++) {
