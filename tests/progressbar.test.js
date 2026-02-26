@@ -78,6 +78,24 @@ test('pickThreshold prefers higher value', () => {
   assert.strictEqual(logic.pickThreshold('40.000', '40000'), 40000);
 });
 
+test('buildEvalKeyStable ignores item order', () => {
+  const a = logic.buildEvalKeyStable({
+    total_amount: 100,
+    items: [
+      { product_id: '2', quantity: 1, line_total: 50 },
+      { product_id: '1', quantity: 1, line_total: 50 },
+    ],
+  });
+  const b = logic.buildEvalKeyStable({
+    total_amount: 100,
+    items: [
+      { product_id: '1', quantity: 1, line_total: 50 },
+      { product_id: '2', quantity: 1, line_total: 50 },
+    ],
+  });
+  assert.strictEqual(a, b);
+});
+
 test('decideEmpty stays non-empty with evidence', () => {
   const now = Date.now();
   assert.strictEqual(

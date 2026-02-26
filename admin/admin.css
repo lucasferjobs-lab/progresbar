@@ -1,14 +1,15 @@
 :root {
-  --bg: #f4f7ff;
-  --bg2: #eef2ff;
+  --bg: #f2f4f7;
+  --bg2: #e9eef4;
   --card: #ffffff;
-  --ink: #0b1220;
-  --muted: #566884;
-  --stroke: rgba(15, 23, 42, 0.14);
-  --stroke2: rgba(15, 23, 42, 0.08);
-  --brand: #2563eb;
-  --brand2: #06b6d4;
-  --ok: #16a34a;
+  --ink: #333e4f;
+  --muted: #5b6678;
+  --stroke: rgba(51, 62, 79, 0.14);
+  --stroke2: rgba(51, 62, 79, 0.08);
+  --navy: #1c2b54;
+  --brand: #008c99;
+  --brand2: #fbb03b;
+  --ok: #77c3a7;
   --danger: #ef4444;
   --shadow: 0 18px 42px rgba(11, 18, 32, 0.12);
   --shadow2: 0 10px 24px rgba(11, 18, 32, 0.1);
@@ -33,9 +34,9 @@ body {
   font-family: var(--font);
   color: var(--ink);
   background:
-    radial-gradient(900px 420px at 10% 0%, rgba(37, 99, 235, 0.18), transparent 55%),
-    radial-gradient(850px 480px at 100% 0%, rgba(6, 182, 212, 0.16), transparent 52%),
-    linear-gradient(180deg, #0b1020 0px, #0b1020 170px, var(--bg) 170px, var(--bg) 100%);
+    radial-gradient(900px 420px at 10% 0%, rgba(0, 140, 153, 0.22), transparent 55%),
+    radial-gradient(850px 480px at 100% 0%, rgba(251, 176, 59, 0.18), transparent 52%),
+    linear-gradient(180deg, var(--navy) 0px, var(--navy) 170px, var(--bg) 170px, var(--bg) 100%);
 }
 
 .pb-app {
@@ -160,7 +161,7 @@ body {
   font-weight: 900;
   font-size: 13px;
   letter-spacing: 0.2px;
-  color: #162136;
+  color: var(--navy);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -175,8 +176,8 @@ body {
 }
 
 .pb-nav__btn.is-active {
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(6, 182, 212, 0.11));
-  border-color: rgba(37, 99, 235, 0.25);
+  background: linear-gradient(135deg, rgba(0, 140, 153, 0.14), rgba(251, 176, 59, 0.14));
+  border-color: rgba(0, 140, 153, 0.25);
 }
 
 .pb-nav__btn.is-active::after {
@@ -260,7 +261,7 @@ body {
 .tab-btn {
   border: 1px solid transparent;
   background: transparent;
-  color: #1a253a;
+  color: var(--navy);
   border-radius: 999px;
   padding: 8px 12px;
   font-weight: 900;
@@ -270,7 +271,7 @@ body {
 
 .tab-btn.active {
   background: #ffffff;
-  border-color: rgba(37, 99, 235, 0.25);
+  border-color: rgba(0, 140, 153, 0.25);
   box-shadow: 0 10px 18px rgba(11, 18, 32, 0.08);
 }
 
@@ -303,7 +304,7 @@ body {
 .pb-field label {
   font-size: 13px;
   font-weight: 900;
-  color: #1a253a;
+  color: var(--navy);
 }
 
 .pb-field input[type="text"],
@@ -331,8 +332,8 @@ body {
 
 .pb-field input:focus,
 .pb-field select:focus {
-  border-color: rgba(37, 99, 235, 0.6);
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+  border-color: rgba(0, 140, 153, 0.65);
+  box-shadow: 0 0 0 4px rgba(0, 140, 153, 0.16);
 }
 
 .pb-toggle {
@@ -355,7 +356,7 @@ body {
 .pb-toggle span {
   font-weight: 900;
   font-size: 13px;
-  color: #162136;
+  color: var(--navy);
 }
 
 .pb-actions {
@@ -375,7 +376,7 @@ body {
   font-weight: 900;
   letter-spacing: 0.25px;
   background: linear-gradient(135deg, var(--brand), var(--brand2));
-  box-shadow: 0 12px 22px rgba(37, 99, 235, 0.22);
+  box-shadow: 0 12px 22px rgba(0, 140, 153, 0.26);
 }
 
 .pb-primary[disabled] {
@@ -406,7 +407,7 @@ body {
 .pb-faq summary {
   cursor: pointer;
   font-weight: 900;
-  color: #162136;
+  color: var(--navy);
   outline: none;
 }
 
@@ -450,7 +451,7 @@ body {
 }
 
 .pb-billing__v {
-  color: #0b1220;
+  color: var(--ink);
   font-size: 13px;
   font-weight: 900;
   text-align: right;
@@ -474,9 +475,9 @@ body {
   gap: 10px;
   height: 46px;
   border-radius: 14px;
-  border: 1px solid rgba(37, 99, 235, 0.28);
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(6, 182, 212, 0.07));
-  color: #0b3d91;
+  border: 1px solid rgba(0, 140, 153, 0.28);
+  background: linear-gradient(135deg, rgba(0, 140, 153, 0.10), rgba(251, 176, 59, 0.10));
+  color: var(--navy);
   font-weight: 900;
   text-decoration: none;
 }
@@ -493,7 +494,7 @@ body {
   max-width: min(420px, calc(100vw - 36px));
   padding: 12px 14px;
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.94);
+  background: rgba(28, 43, 84, 0.94);
   color: #ffffff;
   font-size: 13px;
   font-weight: 900;

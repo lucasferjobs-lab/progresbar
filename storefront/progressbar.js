@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-26-05';
+  const APP_VERSION = '2026-02-26-11';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -70,6 +70,39 @@
     return 0;
   }
 
+  function buildEvalKeyStable(snapshot) {
+    const total = Number(snapshot && snapshot.total_amount) || 0;
+    const items = Array.isArray(snapshot && snapshot.items) ? snapshot.items : [];
+
+    const normalized = items.map(function (it) {
+      const pid = String((it && it.product_id) || '').trim();
+      if (!pid) return null;
+      const qty = Math.max(1, Number((it && it.quantity) || 1));
+      const line = Number((it && it.line_total) || 0);
+      return {
+        product_id: pid,
+        quantity: Number.isFinite(qty) ? qty : 1,
+        line_total: Number.isFinite(line) ? line : 0,
+      };
+    }).filter(function (x) { return !!x; });
+
+    normalized.sort(function (a, b) {
+      const byId = a.product_id.localeCompare(b.product_id);
+      if (byId) return byId;
+      if (a.quantity !== b.quantity) return a.quantity - b.quantity;
+      return a.line_total - b.line_total;
+    });
+
+    const parts = [String(total.toFixed(2)), String(normalized.length)];
+    for (let i = 0; i < normalized.length; i++) {
+      const it = normalized[i];
+      parts.push(it.product_id);
+      parts.push(String(it.quantity || 0));
+      parts.push(String(Number(it.line_total || 0).toFixed(2)));
+    }
+    return parts.join('|');
+  }
+
   function decideEmpty(input) {
     const now = Number(input && input.now) || Date.now();
     const lastEvidenceAt = Number(input && input.lastEvidenceAt) || 0;
@@ -107,7 +140,7 @@
 
     const missing = Math.max(0, threshold - total);
     const reached = missing <= 0;
-    const color = String(cfg.envio_bar_color || '#2563eb');
+    const color = String(cfg.envio_bar_color || '#008c99');
 
     if (reached) {
       return {
@@ -138,7 +171,7 @@
 
     const missing = Math.max(0, threshold - total);
     const reached = missing <= 0;
-    const color = String(cfg.cuotas_bar_color || '#0ea5e9');
+    const color = String(cfg.cuotas_bar_color || '#fbb03b');
 
     if (reached) {
       return {
@@ -168,7 +201,7 @@
       return {
         pct: clampPct((total / envioGoal) * 100),
         message: `Te faltan <strong>$${money(missing)}</strong> para envio gratis`,
-        color: '#2563eb',
+        color: '#008c99',
       };
     }
 
@@ -177,14 +210,14 @@
       return {
         pct: clampPct((total / regaloGoal) * 100),
         message: `<span class="tn-progressbar__ok">Envio gratis activado</span>. Te faltan <strong>$${money(missing)}</strong> para un regalo`,
-        color: '#2563eb',
+        color: '#008c99',
       };
     }
 
     return {
       pct: 100,
       message: '<span class="tn-progressbar__ok">Felicitaciones, ya tenes todos los beneficios.</span>',
-      color: '#2563eb',
+      color: '#008c99',
     };
   }
 
@@ -251,6 +284,11 @@
       freshConfig: false,
       lastConfigFetchAt: 0,
       lastRemote: null,
+      lastRemoteKey: null,
+      lastRemoteAt: 0,
+      lastRemoteErrKey: null,
+      lastRemoteErrAt: 0,
+      configInFlight: null,
       evalTimer: null,
       evalInFlight: null,
       lastEvalKey: null,
@@ -396,9 +434,36 @@
 
     function isVisible(el) {
       if (!el) return false;
-      const style = win.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) return false;
-      return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+      try {
+        const style = win.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0) return false;
+        if (el.getAttribute) {
+          const ariaHidden = el.getAttribute('aria-hidden');
+          if (ariaHidden && String(ariaHidden).toLowerCase() === 'true') return false;
+        }
+
+        // Only apply viewport intersection checks for the cart containers.
+        const shouldCheckViewport = (
+          el.id === 'modal-cart' ||
+          (el.getAttribute && el.getAttribute('data-component') === 'cart') ||
+          (el.classList && (el.classList.contains('modal') || el.classList.contains('modal-cart') || el.classList.contains('js-ajax-cart-panel')))
+        );
+
+        if (shouldCheckViewport && el.getBoundingClientRect) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          const vw = Number(win.innerWidth || doc.documentElement.clientWidth || 0);
+          const vh = Number(win.innerHeight || doc.documentElement.clientHeight || 0);
+          if (vw > 0 && vh > 0) {
+            const tol = 2;
+            if (rect.bottom <= tol || rect.right <= tol || rect.top >= (vh - tol) || rect.left >= (vw - tol)) return false;
+          }
+        }
+
+        return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+      } catch (_) {
+        return false;
+      }
     }
 
     function elSummary(el) {
@@ -513,9 +578,23 @@
     function isCartOpen() {
       const root = getCartContainer();
       if (!root) return false;
-      // Some themes keep multiple cart containers in the DOM; rely on the
-      // active/visible container chosen by getCartContainer().
-      if (root.id === 'modal-cart' && root.classList && root.classList.contains('modal-show')) return true;
+
+      // Modal carts are usually always in the DOM; the theme just toggles a class
+      // or aria-hidden while sliding it on/off screen.
+      if (root.id === 'modal-cart') {
+        if (root.classList && root.classList.contains('modal-show')) return true;
+        try {
+          const aria = root.getAttribute ? root.getAttribute('aria-hidden') : null;
+          if (aria != null && String(aria).toLowerCase() === 'false') return true;
+        } catch (_) {}
+        return false;
+      }
+
+      if (root.classList && root.classList.contains('modal-show')) return true;
+      try {
+        const aria = root.getAttribute ? root.getAttribute('aria-hidden') : null;
+        if (aria != null && String(aria).toLowerCase() === 'true') return false;
+      } catch (_) {}
       return isVisible(root);
     }
 
@@ -553,7 +632,7 @@
           scheduleRender();
           scheduleRemoteEval();
         }
-      }, 140);
+      }, 260);
     }
 
     function getCartRoot() {
@@ -851,7 +930,7 @@
 
     function toUiAmountResult(key, eligibleSubtotal, threshold, cfg, options) {
       const opt = options || {};
-      const color = String(opt.color || '#2563eb');
+      const color = String(opt.color || '#008c99');
       const missing = Math.max(0, threshold - eligibleSubtotal);
       const reached = missing <= 0;
       const prefix = String(opt.text_prefix || '').trim();
@@ -903,7 +982,7 @@
       if (scope === 'all') {
         if (total <= 0) return null;
         return toUiAmountResult('envio', total, threshold, cfg, {
-          color: cfg.envio_bar_color || '#2563eb',
+          color: cfg.envio_bar_color || '#008c99',
           text_prefix: cfg.envio_text_prefix,
           text_suffix: cfg.envio_text_suffix,
           text_reached: cfg.envio_text_reached,
@@ -917,7 +996,7 @@
         const sum = sumEligibleForProduct(target);
         if (!sum.qty) return null;
         return toUiAmountResult('envio', sum.subtotal, threshold, cfg, {
-          color: cfg.envio_bar_color || '#2563eb',
+          color: cfg.envio_bar_color || '#008c99',
           text_prefix: cfg.envio_text_prefix,
           text_suffix: cfg.envio_text_suffix,
           text_reached: cfg.envio_text_reached,
@@ -938,7 +1017,7 @@
       if (scope === 'all') {
         if (total <= 0) return null;
         return toUiAmountResult('cuotas', total, threshold, cfg, {
-          color: cfg.cuotas_bar_color || '#0ea5e9',
+          color: cfg.cuotas_bar_color || '#fbb03b',
           text_prefix: cfg.cuotas_text_prefix,
           text_suffix: cfg.cuotas_text_suffix,
           text_reached: cfg.cuotas_text_reached,
@@ -952,7 +1031,7 @@
         const sum = sumEligibleForProduct(target);
         if (!sum.qty) return null;
         return toUiAmountResult('cuotas', sum.subtotal, threshold, cfg, {
-          color: cfg.cuotas_bar_color || '#0ea5e9',
+          color: cfg.cuotas_bar_color || '#fbb03b',
           text_prefix: cfg.cuotas_text_prefix,
           text_suffix: cfg.cuotas_text_suffix,
           text_reached: cfg.cuotas_text_reached,
@@ -969,7 +1048,7 @@
       if (!r || !r.enabled) return null;
       if (r.has_match === false) return null;
       const d = defaults || {};
-      const color = String(r.bar_color || d.color || '#2563eb');
+      const color = String(r.bar_color || d.color || '#008c99');
       if (r.reached) {
         return {
           key,
@@ -991,7 +1070,7 @@
     function buildRemoteRegalo(remoteRule) {
       const r = remoteRule || null;
       if (!r || !r.enabled) return null;
-      const color = String(r.bar_color || '#a855f7');
+      const color = String(r.bar_color || '#77c3a7');
       if (r.reached) {
         return {
           key: 'regalo',
@@ -1033,7 +1112,7 @@
 
         if (!envioLocal && envioScope === 'category') {
           const rEnvio = buildRemoteAmount('envio', remote.envio, {
-            color: '#2563eb',
+            color: '#008c99',
             default_reached: '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
           });
           if (rEnvio) out.push(rEnvio);
@@ -1041,7 +1120,7 @@
 
         if (!cuotasLocal && cuotasScope === 'category') {
           const rCuotas = buildRemoteAmount('cuotas', remote.cuotas, {
-            color: '#0ea5e9',
+            color: '#fbb03b',
             default_reached: '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
           });
           if (rCuotas) out.push(rCuotas);
@@ -1172,7 +1251,7 @@
 
         fill.style.width = String(clampPct(r.pct)) + '%';
         fill.style.backgroundImage = 'none';
-        fill.style.backgroundColor = r.color || '#2563eb';
+        fill.style.backgroundColor = r.color || '#008c99';
         text.innerHTML = r.message || '&nbsp;';
       }
 
@@ -1350,8 +1429,15 @@
       const total = getCurrentTotal();
       const domItems = buildDomItemsSnapshot();
       if (domItems && domItems.length) {
+        let totalAmount = Number(total || 0);
+        if (!Number.isFinite(totalAmount)) totalAmount = 0;
+        const computedTotal = domItems.reduce(function (acc, it) {
+          const n = Number(it && it.line_total) || 0;
+          return acc + (Number.isFinite(n) ? n : 0);
+        }, 0);
+        if (totalAmount <= 0 && computedTotal > 0) totalAmount = computedTotal;
         dbg('snapshot:dom', { total: Number(total || 0), items: domItems.length, p0: domItems[0] ? domItems[0].product_id : null }, 'debug');
-        return { total_amount: Number(total || 0), items: domItems.map(function (it) {
+        return { total_amount: totalAmount, items: domItems.map(function (it) {
           return { product_id: it.product_id, quantity: it.quantity, unit_price: it.unit_price, line_total: it.line_total, categories: it.categories };
         }) };
       }
@@ -1370,38 +1456,51 @@
         return { product_id: pid, quantity: qty, unit_price: unit != null ? unit : 0, line_total: line, categories, _line_id: lineId || null };
       }).filter(function (i) { return i.product_id; });
 
+      let totalAmount = Number(total || 0);
+      if (!Number.isFinite(totalAmount)) totalAmount = 0;
+      const computedTotal = items.reduce(function (acc, it) {
+        const n = Number(it && it.line_total) || 0;
+        return acc + (Number.isFinite(n) ? n : 0);
+      }, 0);
+      if (totalAmount <= 0 && computedTotal > 0) totalAmount = computedTotal;
+
       dbg('snapshot:ls', { total: Number(total || 0), items: items.length, p0: items[0] ? items[0].product_id : null }, 'debug');
-      return { total_amount: Number(total || 0), items: items.map(function (it) {
+      return { total_amount: totalAmount, items: items.map(function (it) {
         return { product_id: it.product_id, quantity: it.quantity, unit_price: it.unit_price, line_total: it.line_total, categories: it.categories };
       }) };
     }
 
     function buildEvalKey(snapshot) {
-      // Stable-ish key: avoid spamming server when nothing relevant changed.
-      const total = Number(snapshot && snapshot.total_amount) || 0;
-      const items = Array.isArray(snapshot && snapshot.items) ? snapshot.items : [];
-      const parts = [String(total.toFixed(2)), String(items.length)];
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i] || {};
-        parts.push(String(it.product_id || ''));
-        parts.push(String(it.quantity || 0));
-        parts.push(String(Number(it.line_total || 0).toFixed(2)));
-      }
-      return parts.join('|');
+      return buildEvalKeyStable(snapshot);
     }
 
     function scheduleRemoteEval() {
       if (!detectStoreId()) return;
+      if (!isCartOpen()) return;
       if (isCartEmpty()) return;
       if (!requiresRemoteEvaluation(state.config)) {
         state.lastRemote = null;
+        state.lastRemoteKey = null;
         return;
       }
 
       const snapshot = buildSnapshot();
+      const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
+      if (!items.length) return;
       const evalKey = buildEvalKey(snapshot);
       const now = Date.now();
-      if (state.lastRemote && state.lastEvalKey === evalKey && now - (state.lastEvalAt || 0) < 800) return;
+
+      // If we already have a fresh remote result for this exact signature,
+      // don't refetch. Themes can cause lots of DOM churn while the cart is stable.
+      const REMOTE_FRESH_MS = 15_000;
+      if (state.lastRemote && state.lastRemoteKey === evalKey && now - (state.lastRemoteAt || 0) < REMOTE_FRESH_MS) return;
+
+      // Backoff on repeated failures for the same signature.
+      const REMOTE_ERROR_BACKOFF_MS = 5_000;
+      if (state.lastRemoteErrKey === evalKey && now - (state.lastRemoteErrAt || 0) < REMOTE_ERROR_BACKOFF_MS) return;
+
+      // Avoid spamming when nothing relevant changed.
+      if (state.lastEvalKey === evalKey && now - (state.lastEvalAt || 0) < 1200) return;
 
       state.pendingEvalSnapshot = snapshot;
       state.pendingEvalKey = evalKey;
@@ -1410,9 +1509,11 @@
       // Don't thrash: wait for the in-flight request to finish, then run again.
       if (state.evalInFlight) return;
 
-      // Debounce to coalesce DOM mutation bursts.
-      if (state.evalTimer) return;
-      state.evalTimer = setTimeout(runRemoteEval, 180);
+      // Debounce to coalesce DOM mutation bursts (trailing edge).
+      if (state.evalTimer) {
+        try { clearTimeout(state.evalTimer); } catch (_) {}
+      }
+      state.evalTimer = setTimeout(runRemoteEval, 220);
     }
 
     async function runRemoteEval() {
@@ -1428,6 +1529,7 @@
 
       if (!snapshot || !evalKey) return;
       if (!detectStoreId()) return;
+      if (!isCartOpen()) return;
       if (isCartEmpty()) return;
       if (!requiresRemoteEvaluation(state.config)) return;
 
@@ -1449,12 +1551,20 @@
         clearTimeout(abortTimer);
         if (state.evalInFlight === controller) state.evalInFlight = null;
         dbg('eval:resp', { ok: !!(res && res.ok), status: res ? res.status : null, ms: Date.now() - startedAt }, 'debug');
-        if (!res.ok) return;
+        if (!res.ok) {
+          state.lastRemoteErrKey = evalKey;
+          state.lastRemoteErrAt = Date.now();
+          return;
+        }
         const data = await res.json();
         state.lastRemote = data;
+        state.lastRemoteKey = evalKey;
+        state.lastRemoteAt = Date.now();
         renderNow();
       } catch (_) {
         // ignore
+        state.lastRemoteErrKey = evalKey;
+        state.lastRemoteErrAt = Date.now();
       } finally {
         state.evalInFlight = null;
         // If something changed while we were in-flight, schedule again.
@@ -1466,10 +1576,13 @@
       if (!detectStoreId()) return;
       const now = Date.now();
       const minInterval = state.config ? 3000 : 400;
+      if (state.configInFlight) return state.configInFlight;
       if (!force && now - state.lastConfigFetchAt < minInterval) return;
+      if (force && now - state.lastConfigFetchAt < 250) return;
       state.lastConfigFetchAt = now;
 
-      try {
+      const promise = (async function () {
+        try {
         const startedAt = Date.now();
         dbg('config:fetch', { force: !!force }, 'debug');
         const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' });
@@ -1479,6 +1592,8 @@
         state.config = data || null;
         state.configLoaded = !!data;
         state.freshConfig = !!data;
+        // Config changes can affect remote evaluation even if the cart didn't change.
+        state.lastRemoteKey = null;
         try {
           if (win.localStorage && data) {
             win.localStorage.setItem(getCacheKey(), JSON.stringify(data));
@@ -1486,7 +1601,12 @@
         } catch (_) {}
         renderNow();
         scheduleRemoteEval();
-      } catch (_) {}
+        } catch (_) {}
+        finally { state.configInFlight = null; }
+      })();
+
+      state.configInFlight = promise;
+      return promise;
     }
 
     function bindSubtotalObserver() {
@@ -1699,7 +1819,7 @@
 
     dbg('boot', { app: APP_VERSION, baseUrl, storeId: storeId || null, debug: debugEnabled }, 'info');
 
-    loadConfig(true).catch(function () {});
+    loadConfig(false).catch(function () {});
     maybeStartCartOpenPoll();
     patchLsCartMethods();
     // Patch LS early even if it boots late: makes 0->1 add-to-cart stable.
@@ -1721,7 +1841,7 @@
         tries += 1;
         const sid = detectStoreId();
         if (sid) {
-          loadConfig(true).catch(function () {});
+          loadConfig(false).catch(function () {});
           patchLsCartMethods();
           scheduleRender();
           return;
@@ -1734,9 +1854,8 @@
     // Gentle retries for cold starts; observers will still keep UI in sync.
     (function retryConfig() {
       if (state.configLoaded) return;
-      setTimeout(function () { loadConfig(true).catch(function () {}); }, 300);
-      setTimeout(function () { loadConfig(true).catch(function () {}); }, 1000);
-      setTimeout(function () { loadConfig(true).catch(function () {}); }, 3000);
+      setTimeout(function () { loadConfig(false).catch(function () {}); }, 500);
+      setTimeout(function () { loadConfig(false).catch(function () {}); }, 2000);
     })();
 
     // No aggressive polling. Cart DOM observers + explicit events drive updates.
@@ -1749,6 +1868,7 @@
     parseSubtotalFromText,
     parseConfigNumber,
     pickThreshold,
+    buildEvalKeyStable,
     decideEmpty,
     buildLocalEnvioResult,
     buildLocalCuotasResult,
