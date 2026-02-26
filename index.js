@@ -22,6 +22,8 @@ const OAUTH_STATE_ENFORCE = process.env.OAUTH_STATE_ENFORCE === 'true';
 const OAUTH_STATE_TTL_MS = Number(process.env.OAUTH_STATE_TTL_MS || 10 * 60 * 1000);
 const API_BASE = process.env.TIENDANUBE_API_BASE || 'https://api.tiendanube.com';
 const API_VERSION = process.env.TIENDANUBE_API_VERSION || '2025-03';
+const ADMIN_UI_VERSION = process.env.ADMIN_UI_VERSION || '2026-02-26-01';
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'contacto@franfersoluciones.com';
 
 const ADMIN_ALLOWED_ORIGINS = [
   'https://admin.tiendanube.com',
@@ -84,7 +86,7 @@ app.use('/static', express.static(path.join(__dirname), {
   lastModified: false,
   maxAge: 0,
   setHeaders: (res, filePath) => {
-    if (filePath.includes(`${path.sep}storefront${path.sep}`)) {
+    if (filePath.includes(`${path.sep}storefront${path.sep}`) || filePath.includes(`${path.sep}admin${path.sep}`)) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
@@ -115,6 +117,17 @@ app.get('/oauth/state', (_req, res) => {
   const state = randomState();
   storeOAuthState(state);
   res.status(200).json({ state, expires_in_ms: OAUTH_STATE_TTL_MS });
+});
+
+app.get('/api/admin/bootstrap', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  return res.status(200).json({
+    clientId: CLIENT_ID || null,
+    allowedOrigins: ADMIN_ALLOWED_ORIGINS,
+    supportEmail: SUPPORT_EMAIL,
+  });
 });
 
 function randomState() {
@@ -663,545 +676,16 @@ app.get('/instalacion', async (req, res) => {
   }
 });
 
-app.get('/admin', async (req, res) => {
-  const storeId = String(req.query.store_id || req.query.store || '');
-  const safeStoreId = storeId.replace(/[^0-9]/g, '');
-
+app.get('/admin', (req, res) => {
+  // Admin UI is embedded in Tiendanube iframe: keep it uncached.
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
-  return res.status(200).send(`<!DOCTYPE html>
-<html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ProgressBar - Configuracion</title>
-    <style>
-      :root {
-        --bg: #eef3fb;
-        --card: #ffffff;
-        --text: #0f172a;
-        --muted: #475467;
-        --line: #d0ddf0;
-        --brand: #2563eb;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        padding: 20px 12px;
-        font-family: "Segoe UI", Arial, sans-serif;
-        background: radial-gradient(circle at top left, #ffffff, var(--bg));
-        color: var(--text);
-      }
-      .card {
-        width: min(900px, 100%);
-        margin: 0 auto;
-        background: var(--card);
-        border: 1px solid #d9e4f5;
-        border-radius: 16px;
-        padding: 18px;
-        box-shadow: 0 10px 28px rgba(9, 30, 66, 0.08);
-      }
-      h1 { margin: 0 0 12px; font-size: 30px; }
-      .settings-shell { border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
-      .tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-      .tab-btn {
-        border: 1px solid #b7ccef;
-        background: #f6f9ff;
-        color: #1e293b;
-        border-radius: 999px;
-        padding: 8px 14px;
-        font-weight: 600;
-        cursor: pointer;
-        width: auto;
-        height: auto;
-        text-transform: none;
-        letter-spacing: 0;
-        margin: 0;
-      }
-      .tab-btn.active { background: #e6efff; border-color: #7aa7ff; color: #0b3d91; }
-      .tab-panel { display: none; border: 1px solid #d5e2f5; border-radius: 10px; padding: 12px 10px; }
-      .tab-panel.active { display: block; }
-      .group { display: grid; gap: 6px; }
-      .row { display: grid; gap: 6px; }
-      .row label, .inline label { font-size: 14px; font-weight: 600; }
-      .inline { display: flex; align-items: center; gap: 8px; }
-      input[type="number"], input[type="text"], select {
-        width: 100%;
-        height: 40px;
-        border: 1px solid #c4d3e5;
-        border-radius: 8px;
-        padding: 0 12px;
-        font-size: 14px;
-        outline: none;
-      }
-      input[type="color"] {
-        width: 100%;
-        height: 40px;
-        border: 1px solid #c4d3e5;
-        border-radius: 8px;
-        background: #fff;
-      }
-      input[type="number"]:focus, input[type="text"]:focus, select:focus {
-        border-color: #8bb8ff;
-        box-shadow: 0 0 0 3px rgba(11, 109, 250, 0.12);
-      }
-      button {
-        margin-top: 10px;
-        width: 100%;
-        height: 44px;
-        border: 0;
-        border-radius: 10px;
-        background: var(--brand);
-        color: #fff;
-        font-weight: 700;
-        font-size: 14px;
-        letter-spacing: 0.2px;
-        text-transform: uppercase;
-        cursor: pointer;
-      }
-      .meta { margin-top: 12px; color: var(--muted); font-size: 13px; }
-      .error { margin-top: 12px; color: #b42318; font-size: 13px; }
-      .hidden { display: none; }
-      @media (max-width: 680px) {
-        body { padding: 12px; }
-        .card { padding: 14px; border-radius: 12px; }
-        h1 { font-size: 24px; }
-      }
-    </style>
-  </head>
-  <body>
-    <main class="card">
-      <h1>Panel de Configuracion</h1>
-
-      <form action="/admin/save" method="POST">
-        <input type="hidden" name="store_id" id="storeId" value="${safeStoreId}" />
-
-        <section class="settings-shell">
-          <div class="tabs">
-            <button type="button" class="tab-btn active" data-tab-target="tab-envio">Envio Gratis</button>
-            <button type="button" class="tab-btn" data-tab-target="tab-cuotas">Cuotas</button>
-            <button type="button" class="tab-btn" data-tab-target="tab-regalo">Regalo</button>
-          </div>
-
-          <div id="tab-envio" class="tab-panel active">
-            <div class="group">
-              <div class="inline">
-                <input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" checked />
-                <label for="enable_envio_rule">Activar</label>
-              </div>
-              <div class="row">
-                <label for="envio_min_amount">Desde X monto</label>
-                <input id="envio_min_amount" type="number" min="0" name="envio_min_amount" value="50000" />
-              </div>
-              <div class="row">
-                <label for="envio_scope">Aplica a</label>
-                <select id="envio_scope" name="envio_scope">
-                  <option value="all">Todo el carrito</option>
-                  <option value="product">Producto</option>
-                  <option value="category">Categoria</option>
-                </select>
-              </div>
-              <div class="row hidden" id="envio_product_wrap">
-                <label for="envio_product_id">Producto</label>
-                <select id="envio_product_id" name="envio_product_id"><option value="">Seleccionar</option></select>
-              </div>
-              <div class="row hidden" id="envio_category_wrap">
-                <label for="envio_category_id">Categoria</label>
-                <select id="envio_category_id" name="envio_category_id"><option value="">Seleccionar</option></select>
-              </div>
-              <div class="row">
-                <label for="envio_text_prefix">Texto inicial</label>
-                <input id="envio_text_prefix" type="text" name="envio_text_prefix" />
-              </div>
-              <div class="row">
-                <label for="envio_text_suffix">Texto final</label>
-                <input id="envio_text_suffix" type="text" name="envio_text_suffix" />
-              </div>
-              <div class="row">
-                <label for="envio_text_reached">Texto al alcanzar</label>
-                <input id="envio_text_reached" type="text" name="envio_text_reached" />
-              </div>
-              <div class="row">
-                <label for="envio_bar_color">Color barra</label>
-                <input id="envio_bar_color" type="color" name="envio_bar_color" value="#2563eb" />
-              </div>
-            </div>
-          </div>
-
-          <div id="tab-cuotas" class="tab-panel">
-            <div class="group">
-              <div class="inline">
-                <input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" checked />
-                <label for="enable_cuotas_rule">Activar</label>
-              </div>
-              <div class="row">
-                <label for="cuotas_threshold_amount">Desde X monto</label>
-                <input id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" value="80000" />
-              </div>
-              <div class="row">
-                <label for="cuotas_scope">Aplica a</label>
-                <select id="cuotas_scope" name="cuotas_scope">
-                  <option value="all">Todo el carrito</option>
-                  <option value="product">Producto</option>
-                  <option value="category">Categoria</option>
-                </select>
-              </div>
-              <div class="row hidden" id="cuotas_product_wrap">
-                <label for="cuotas_product_id">Producto</label>
-                <select id="cuotas_product_id" name="cuotas_product_id"><option value="">Seleccionar</option></select>
-              </div>
-              <div class="row hidden" id="cuotas_category_wrap">
-                <label for="cuotas_category_id">Categoria</label>
-                <select id="cuotas_category_id" name="cuotas_category_id"><option value="">Seleccionar</option></select>
-              </div>
-              <div class="row">
-                <label for="cuotas_text_prefix">Texto inicial</label>
-                <input id="cuotas_text_prefix" type="text" name="cuotas_text_prefix" />
-              </div>
-              <div class="row">
-                <label for="cuotas_text_suffix">Texto final</label>
-                <input id="cuotas_text_suffix" type="text" name="cuotas_text_suffix" />
-              </div>
-              <div class="row">
-                <label for="cuotas_text_reached">Texto al alcanzar</label>
-                <input id="cuotas_text_reached" type="text" name="cuotas_text_reached" />
-              </div>
-              <div class="row">
-                <label for="cuotas_bar_color">Color barra</label>
-                <input id="cuotas_bar_color" type="color" name="cuotas_bar_color" value="#0ea5e9" />
-              </div>
-            </div>
-          </div>
-
-          <div id="tab-regalo" class="tab-panel">
-            <div class="group">
-              <div class="inline">
-                <input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" checked />
-                <label for="enable_regalo_rule">Activar</label>
-              </div>
-              <div class="row">
-                <label for="regalo_mode">Modo</label>
-                <select id="regalo_mode" name="regalo_mode">
-                  <option value="combo_products">Productos juntos</option>
-                  <option value="target_rule">Cantidad o categoria</option>
-                </select>
-              </div>
-              <div class="row">
-                <label for="regalo_min_amount">Desde X monto</label>
-                <input id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" value="100000" />
-              </div>
-
-              <div id="regalo_combo_fields">
-                <div class="row">
-                  <label for="regalo_primary_product_id">Producto 1</label>
-                  <select id="regalo_primary_product_id" name="regalo_primary_product_id"><option value="">Seleccionar</option></select>
-                </div>
-                <div class="row">
-                  <label for="regalo_secondary_product_id">Producto 2</label>
-                  <select id="regalo_secondary_product_id" name="regalo_secondary_product_id"><option value="">Seleccionar</option></select>
-                </div>
-              </div>
-
-              <div id="regalo_target_fields" class="hidden">
-                <div class="row">
-                  <label for="regalo_target_type">Condicion</label>
-                  <select id="regalo_target_type" name="regalo_target_type">
-                    <option value="same_product_qty">Cantidad de producto</option>
-                    <option value="category_qty">Cantidad en categoria</option>
-                  </select>
-                </div>
-                <div class="row">
-                  <label for="regalo_target_qty">Cantidad objetivo</label>
-                  <input id="regalo_target_qty" type="number" min="0" name="regalo_target_qty" value="0" />
-                </div>
-                <div class="row" id="regalo_target_product_wrap">
-                  <label for="regalo_target_product_id">Producto objetivo</label>
-                  <select id="regalo_target_product_id" name="regalo_target_product_id"><option value="">Seleccionar</option></select>
-                </div>
-                <div class="row hidden" id="regalo_target_category_wrap">
-                  <label for="regalo_target_category_id">Categoria objetivo</label>
-                  <select id="regalo_target_category_id" name="regalo_target_category_id"><option value="">Seleccionar</option></select>
-                </div>
-              </div>
-
-              <div class="row">
-                <label for="regalo_gift_product_id">Producto regalo</label>
-                <select id="regalo_gift_product_id" name="regalo_gift_product_id"><option value="">Seleccionar</option></select>
-              </div>
-              <div class="row">
-                <label for="regalo_text_prefix">Texto inicial</label>
-                <input id="regalo_text_prefix" type="text" name="regalo_text_prefix" />
-              </div>
-              <div class="row">
-                <label for="regalo_text_suffix">Texto final</label>
-                <input id="regalo_text_suffix" type="text" name="regalo_text_suffix" />
-              </div>
-              <div class="row">
-                <label for="regalo_text_reached">Texto al alcanzar</label>
-                <input id="regalo_text_reached" type="text" name="regalo_text_reached" />
-              </div>
-              <div class="row">
-                <label for="regalo_bar_color">Color barra</label>
-                <input id="regalo_bar_color" type="color" name="regalo_bar_color" value="#a855f7" />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <button type="submit">Guardar configuracion</button>
-      </form>
-
-      <p class="meta">Store ID: <span id="storeLabel">${safeStoreId || 'pendiente'}</span></p>
-      <p class="error" id="nexoError" style="display:none;"></p>
-    </main>
-
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
-    <script>
-      window.global = window;
-      window.process = window.process || { env: {} };
-      window.react = window.React;
-    </script>
-    <script src="https://unpkg.com/@tiendanube/nexo@1.3.0/dist/index.js" crossorigin="anonymous"></script>
-    <script>
-      (async function initNexo() {
-        const ACTION_CONNECTED = 'app/connected';
-        const ACTION_READY = 'app/ready';
-        const ACTION_STORE_INFO = 'app/store/info';
-        const ADMIN_ALLOWED_ORIGINS = ${JSON.stringify(ADMIN_ALLOWED_ORIGINS)};
-
-        const nexoError = document.getElementById('nexoError');
-        const storeIdInput = document.getElementById('storeId');
-        const storeIdLabel = document.getElementById('storeLabel');
-        const initialStoreId = '${safeStoreId}';
-        const tabButtons = Array.prototype.slice.call(document.querySelectorAll('.tab-btn'));
-        const tabPanels = Array.prototype.slice.call(document.querySelectorAll('.tab-panel'));
-
-        const envioScopeInput = document.getElementById('envio_scope');
-        const envioProductWrap = document.getElementById('envio_product_wrap');
-        const envioCategoryWrap = document.getElementById('envio_category_wrap');
-        const cuotasScopeInput = document.getElementById('cuotas_scope');
-        const cuotasProductWrap = document.getElementById('cuotas_product_wrap');
-        const cuotasCategoryWrap = document.getElementById('cuotas_category_wrap');
-        const regaloModeInput = document.getElementById('regalo_mode');
-        const regaloTargetTypeInput = document.getElementById('regalo_target_type');
-        const regaloComboFields = document.getElementById('regalo_combo_fields');
-        const regaloTargetFields = document.getElementById('regalo_target_fields');
-        const regaloTargetProductWrap = document.getElementById('regalo_target_product_wrap');
-        const regaloTargetCategoryWrap = document.getElementById('regalo_target_category_wrap');
-
-        const selectData = { products: [], categories: [] };
-        const preselected = {};
-
-        function toggleScope(scope, productWrap, categoryWrap) {
-          productWrap.classList.toggle('hidden', scope !== 'product');
-          categoryWrap.classList.toggle('hidden', scope !== 'category');
-        }
-
-        function toggleRegaloMode() {
-          const mode = regaloModeInput.value;
-          const isCombo = mode === 'combo_products';
-          regaloComboFields.classList.toggle('hidden', !isCombo);
-          regaloTargetFields.classList.toggle('hidden', isCombo);
-          toggleRegaloTargetType();
-        }
-
-        function toggleRegaloTargetType() {
-          const type = regaloTargetTypeInput.value;
-          regaloTargetProductWrap.classList.toggle('hidden', type !== 'same_product_qty');
-          regaloTargetCategoryWrap.classList.toggle('hidden', type !== 'category_qty');
-        }
-
-        function initTabs() {
-          tabButtons.forEach(function (btn) {
-            btn.addEventListener('click', function () {
-              const target = btn.getAttribute('data-tab-target');
-              tabButtons.forEach(function (b) { b.classList.remove('active'); });
-              tabPanels.forEach(function (p) { p.classList.remove('active'); });
-              btn.classList.add('active');
-              const panel = document.getElementById(target);
-              if (panel) panel.classList.add('active');
-            });
-          });
-        }
-
-        function fillSelect(selectEl, items) {
-          const current = String(selectEl.value || '');
-          selectEl.innerHTML = '<option value="">Seleccionar</option>';
-          (items || []).forEach(function (item) {
-            const opt = document.createElement('option');
-            opt.value = String(item.id);
-            opt.textContent = String(item.name || 'Sin nombre') + ' (#' + String(item.id) + ')';
-            selectEl.appendChild(opt);
-          });
-          if (current) selectEl.value = current;
-        }
-
-        async function loadAllProducts(storeId) {
-          const r = await fetch('/api/admin/products/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
-          if (!r.ok) return [];
-          const data = await r.json();
-          return Array.isArray(data.items) ? data.items : [];
-        }
-
-        async function loadAllCategories(storeId) {
-          const r = await fetch('/api/admin/categories/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
-          if (!r.ok) return [];
-          const data = await r.json();
-          return Array.isArray(data.items) ? data.items : [];
-        }
-
-        function dispatch(type, payload) {
-          if (window.parent && window.parent !== window) {
-            ADMIN_ALLOWED_ORIGINS.forEach(function (origin) {
-              window.parent.postMessage({ type: type, payload: payload }, origin);
-            });
-          }
-        }
-
-        function dispatchHandshake() {
-          dispatch(ACTION_CONNECTED);
-          dispatch(ACTION_READY);
-        }
-
-        function waitFor(type, timeoutMs) {
-          return new Promise(function (resolve, reject) {
-            const timeoutId = setTimeout(function () {
-              window.removeEventListener('message', onMessage);
-              reject(new Error(type + ' timeout'));
-            }, timeoutMs);
-
-            function onMessage(event) {
-              if (!event || !ADMIN_ALLOWED_ORIGINS.includes(event.origin)) return;
-              const data = event && event.data;
-              if (!data || data.type !== type) return;
-              clearTimeout(timeoutId);
-              window.removeEventListener('message', onMessage);
-              resolve(data.payload || {});
-            }
-
-            window.addEventListener('message', onMessage);
-          });
-        }
-
-        try {
-          initTabs();
-          toggleScope(envioScopeInput.value, envioProductWrap, envioCategoryWrap);
-          toggleScope(cuotasScopeInput.value, cuotasProductWrap, cuotasCategoryWrap);
-          toggleRegaloMode();
-          envioScopeInput.addEventListener('change', function () { toggleScope(envioScopeInput.value, envioProductWrap, envioCategoryWrap); });
-          cuotasScopeInput.addEventListener('change', function () { toggleScope(cuotasScopeInput.value, cuotasProductWrap, cuotasCategoryWrap); });
-          regaloModeInput.addEventListener('change', toggleRegaloMode);
-          regaloTargetTypeInput.addEventListener('change', toggleRegaloTargetType);
-
-          if (window.parent && window.parent !== window) {
-            const nexoLib = window['@tiendanube/nexo'];
-            if (nexoLib && typeof nexoLib.create === 'function') {
-              const nexo = nexoLib.create({ clientId: ${JSON.stringify(CLIENT_ID)}, log: false });
-              await nexoLib.connect(nexo, 5000);
-              nexoLib.iAmReady(nexo);
-              try {
-                const storeInfo = await nexoLib.getStoreInfo(nexo);
-                if (storeInfo && storeInfo.id) {
-                  const detectedStoreId = String(storeInfo.id);
-                  storeIdInput.value = detectedStoreId;
-                  storeIdLabel.textContent = detectedStoreId;
-                }
-              } catch (_) {}
-            } else {
-              dispatchHandshake();
-              waitFor(ACTION_CONNECTED, 3500).catch(function () {});
-              try {
-                const storeInfo = await (function () {
-                  const info = waitFor(ACTION_STORE_INFO, 3000);
-                  dispatch(ACTION_STORE_INFO);
-                  return info;
-                })();
-                if (storeInfo && storeInfo.id) {
-                  const detectedStoreId = String(storeInfo.id);
-                  storeIdInput.value = detectedStoreId;
-                  storeIdLabel.textContent = detectedStoreId;
-                }
-              } catch (_) {}
-            }
-          }
-
-          const resolvedStoreId = storeIdInput.value || initialStoreId;
-          if (!resolvedStoreId) return;
-
-          try {
-            const cfgRes = await fetch('/api/config/' + encodeURIComponent(resolvedStoreId), { cache: 'no-store' });
-            if (cfgRes.ok) {
-              const cfg = await cfgRes.json();
-              if (cfg.enable_envio_rule != null) document.getElementById('enable_envio_rule').checked = !!cfg.enable_envio_rule;
-              if (cfg.enable_cuotas_rule != null) document.getElementById('enable_cuotas_rule').checked = !!cfg.enable_cuotas_rule;
-              if (cfg.enable_regalo_rule != null) document.getElementById('enable_regalo_rule').checked = !!cfg.enable_regalo_rule;
-              if (cfg.envio_min_amount != null) document.getElementById('envio_min_amount').value = Number(cfg.envio_min_amount);
-              if (cfg.envio_scope) document.getElementById('envio_scope').value = String(cfg.envio_scope);
-              if (cfg.envio_text_prefix != null) document.getElementById('envio_text_prefix').value = String(cfg.envio_text_prefix || '');
-              if (cfg.envio_text_suffix != null) document.getElementById('envio_text_suffix').value = String(cfg.envio_text_suffix || '');
-              if (cfg.envio_text_reached != null) document.getElementById('envio_text_reached').value = String(cfg.envio_text_reached || '');
-              if (cfg.envio_bar_color) document.getElementById('envio_bar_color').value = String(cfg.envio_bar_color);
-              if (cfg.cuotas_threshold_amount != null) document.getElementById('cuotas_threshold_amount').value = Number(cfg.cuotas_threshold_amount);
-              if (cfg.cuotas_scope) document.getElementById('cuotas_scope').value = String(cfg.cuotas_scope);
-              if (cfg.cuotas_text_prefix != null) document.getElementById('cuotas_text_prefix').value = String(cfg.cuotas_text_prefix || '');
-              if (cfg.cuotas_text_suffix != null) document.getElementById('cuotas_text_suffix').value = String(cfg.cuotas_text_suffix || '');
-              if (cfg.cuotas_text_reached != null) document.getElementById('cuotas_text_reached').value = String(cfg.cuotas_text_reached || '');
-              if (cfg.cuotas_bar_color) document.getElementById('cuotas_bar_color').value = String(cfg.cuotas_bar_color);
-              if (cfg.regalo_mode) document.getElementById('regalo_mode').value = String(cfg.regalo_mode);
-              if (cfg.regalo_min_amount != null) document.getElementById('regalo_min_amount').value = Number(cfg.regalo_min_amount);
-              if (cfg.regalo_target_type) document.getElementById('regalo_target_type').value = String(cfg.regalo_target_type);
-              if (cfg.regalo_target_qty != null) document.getElementById('regalo_target_qty').value = Number(cfg.regalo_target_qty);
-              if (cfg.regalo_text_prefix != null) document.getElementById('regalo_text_prefix').value = String(cfg.regalo_text_prefix || '');
-              if (cfg.regalo_text_suffix != null) document.getElementById('regalo_text_suffix').value = String(cfg.regalo_text_suffix || '');
-              if (cfg.regalo_text_reached != null) document.getElementById('regalo_text_reached').value = String(cfg.regalo_text_reached || '');
-              if (cfg.regalo_bar_color) document.getElementById('regalo_bar_color').value = String(cfg.regalo_bar_color);
-
-              preselected.envio_category_id = String(cfg.envio_category_id || '');
-              preselected.envio_product_id = String(cfg.envio_product_id || '');
-              preselected.cuotas_category_id = String(cfg.cuotas_category_id || '');
-              preselected.cuotas_product_id = String(cfg.cuotas_product_id || '');
-              preselected.regalo_primary_product_id = String(cfg.regalo_primary_product_id || '');
-              preselected.regalo_secondary_product_id = String(cfg.regalo_secondary_product_id || '');
-              preselected.regalo_target_product_id = String(cfg.regalo_target_product_id || '');
-              preselected.regalo_target_category_id = String(cfg.regalo_target_category_id || '');
-              preselected.regalo_gift_product_id = String(cfg.regalo_gift_product_id || '');
-            }
-          } catch (_) {}
-
-          toggleScope(envioScopeInput.value, envioProductWrap, envioCategoryWrap);
-          toggleScope(cuotasScopeInput.value, cuotasProductWrap, cuotasCategoryWrap);
-          toggleRegaloMode();
-
-          const [products, categories] = await Promise.all([
-            loadAllProducts(resolvedStoreId),
-            loadAllCategories(resolvedStoreId),
-          ]);
-          selectData.products = products;
-          selectData.categories = categories;
-
-          ['envio_product_id', 'cuotas_product_id', 'regalo_primary_product_id', 'regalo_secondary_product_id', 'regalo_target_product_id', 'regalo_gift_product_id']
-            .forEach(function (id) { fillSelect(document.getElementById(id), selectData.products); });
-          ['envio_category_id', 'cuotas_category_id', 'regalo_target_category_id']
-            .forEach(function (id) { fillSelect(document.getElementById(id), selectData.categories); });
-
-          Object.keys(preselected).forEach(function (key) {
-            const el = document.getElementById(key);
-            if (el && preselected[key]) el.value = preselected[key];
-          });
-        } catch (err) {
-          if (!initialStoreId) {
-            nexoError.style.display = 'block';
-            nexoError.textContent = 'No se pudo inicializar Nexo.';
-          }
-        }
-      })();
-    </script>
-  </body>
-</html>`);
+  return res.status(200).sendFile(path.join(__dirname, 'admin', 'admin.html'));
 });
 
 app.post('/admin/save', async (req, res) => {
+  const wantsJson = String(req.get('accept') || '').includes('application/json');
   const storeId = String(req.body.store_id || '').replace(/[^0-9]/g, '');
   const enableEnvioRule = req.body.enable_envio_rule === '1';
   const enableCuotasRule = req.body.enable_cuotas_rule === '1';
@@ -1239,9 +723,13 @@ app.post('/admin/save', async (req, res) => {
   const regaloTextReached = String(req.body.regalo_text_reached || '').trim();
   const regaloBarColor = String(req.body.regalo_bar_color || '').trim();
 
-  if (!storeId) return res.status(400).send('Missing store_id');
+  if (!storeId) {
+    return wantsJson ? res.status(400).json({ error: 'Missing store_id' }) : res.status(400).send('Missing store_id');
+  }
   if ([envioMinAmount, cuotasThresholdAmount, regaloMinAmount, regaloTargetQty].some((n) => Number.isNaN(n) || n < 0)) {
-    return res.status(400).send('Invalid numeric values');
+    return wantsJson
+      ? res.status(400).json({ error: 'Invalid numeric values' })
+      : res.status(400).send('Invalid numeric values');
   }
 
   try {
@@ -1363,10 +851,13 @@ app.post('/admin/save', async (req, res) => {
     );
 
     evaluateGoalsCache.clear();
-    return res.redirect(302, `/admin?store_id=${storeId}`);
+    if (wantsJson) return res.status(200).json({ ok: true });
+    return res.redirect(302, `/admin?store_id=${storeId}&saved=1`);
   } catch (error) {
     console.error('[admin/save] failed:', error.message);
-    return res.status(500).send('Save failed');
+    return wantsJson
+      ? res.status(500).json({ error: String(error.message || 'Save failed') })
+      : res.status(500).send('Save failed');
   }
 });
 

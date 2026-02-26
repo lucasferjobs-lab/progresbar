@@ -1,0 +1,470 @@
+(function () {
+  if (window.__PB_ADMIN_LOADED__) return;
+  window.__PB_ADMIN_LOADED__ = true;
+
+  const cfg = window.__PB_ADMIN__ || {};
+  const FALLBACK_ALLOWED_ORIGINS = [
+    'https://admin.tiendanube.com',
+    'https://admin.nuvemshop.com.br',
+    'https://admin.lojavirtualnuvem.com.br',
+  ];
+
+  let CLIENT_ID = cfg.clientId || null;
+  let ADMIN_ALLOWED_ORIGINS = Array.isArray(cfg.allowedOrigins) ? cfg.allowedOrigins : FALLBACK_ALLOWED_ORIGINS;
+  let SUPPORT_EMAIL = String(cfg.supportEmail || '').trim();
+
+  const ACTION_CONNECTED = 'app/connected';
+  const ACTION_READY = 'app/ready';
+  const ACTION_STORE_INFO = 'app/store/info';
+
+  const doc = window.document;
+
+  function $(id) {
+    return doc.getElementById(id);
+  }
+
+  function sanitizeStoreId(value) {
+    return String(value || '').replace(/[^0-9]/g, '');
+  }
+
+  function showToast(message, kind) {
+    const el = $('pbToast');
+    if (!el) return;
+    el.textContent = String(message || '');
+    el.classList.remove('is-error');
+    if (kind === 'error') el.classList.add('is-error');
+    el.classList.add('is-show');
+    window.clearTimeout(showToast._t);
+    showToast._t = window.setTimeout(function () {
+      el.classList.remove('is-show');
+    }, 2300);
+  }
+
+  function setNexoError(message) {
+    const el = $('nexoError');
+    if (!el) return;
+    if (!message) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.textContent = String(message);
+    el.style.display = '';
+  }
+
+  function initViews() {
+    const buttons = Array.prototype.slice.call(doc.querySelectorAll('[data-pb-nav=\"1\"][data-pb-view]'));
+    const panels = Array.prototype.slice.call(doc.querySelectorAll('[data-pb-view-panel]'));
+    if (!buttons.length || !panels.length) return;
+
+    function activate(view) {
+      buttons.forEach(function (b) {
+        b.classList.toggle('is-active', b.getAttribute('data-pb-view') === view);
+      });
+      panels.forEach(function (p) {
+        p.classList.toggle('is-active', p.getAttribute('data-pb-view-panel') === view);
+      });
+    }
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        activate(btn.getAttribute('data-pb-view'));
+      });
+    });
+
+    // Jump buttons inside content (do not affect the nav active state outside activate()).
+    Array.prototype.slice.call(doc.querySelectorAll('[data-pb-jump]')).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        activate(btn.getAttribute('data-pb-jump'));
+      });
+    });
+
+    activate('settings');
+  }
+
+  function initTabs() {
+    const root = $('viewSettings');
+    if (!root) return;
+    const tabButtons = Array.prototype.slice.call(root.querySelectorAll('.tab-btn'));
+    const tabPanels = Array.prototype.slice.call(root.querySelectorAll('.tab-panel'));
+    if (!tabButtons.length || !tabPanels.length) return;
+
+    tabButtons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const target = btn.getAttribute('data-tab-target');
+        tabButtons.forEach(function (b) { b.classList.remove('active'); });
+        tabPanels.forEach(function (p) { p.classList.remove('active'); });
+        btn.classList.add('active');
+        const panel = doc.getElementById(target);
+        if (panel) panel.classList.add('active');
+      });
+    });
+  }
+
+  function toggleScope(scope, productWrap, categoryWrap) {
+    if (!productWrap || !categoryWrap) return;
+    const s = String(scope || 'all');
+    productWrap.classList.toggle('hidden', s !== 'product');
+    categoryWrap.classList.toggle('hidden', s !== 'category');
+  }
+
+  function toggleRegaloMode() {
+    const regaloModeInput = $('regalo_mode');
+    const regaloComboFields = $('regalo_combo_fields');
+    const regaloTargetFields = $('regalo_target_fields');
+    if (!regaloModeInput || !regaloComboFields || !regaloTargetFields) return;
+
+    const mode = String(regaloModeInput.value || 'combo_products');
+    const isCombo = mode === 'combo_products';
+    regaloComboFields.classList.toggle('hidden', !isCombo);
+    regaloTargetFields.classList.toggle('hidden', isCombo);
+    toggleRegaloTargetType();
+  }
+
+  function toggleRegaloTargetType() {
+    const regaloTargetTypeInput = $('regalo_target_type');
+    const regaloTargetProductWrap = $('regalo_target_product_wrap');
+    const regaloTargetCategoryWrap = $('regalo_target_category_wrap');
+    if (!regaloTargetTypeInput || !regaloTargetProductWrap || !regaloTargetCategoryWrap) return;
+
+    const type = String(regaloTargetTypeInput.value || 'same_product_qty');
+    regaloTargetProductWrap.classList.toggle('hidden', type !== 'same_product_qty');
+    regaloTargetCategoryWrap.classList.toggle('hidden', type !== 'category_qty');
+  }
+
+  function fillSelect(selectEl, items) {
+    if (!selectEl) return;
+    const current = String(selectEl.value || '');
+    selectEl.innerHTML = '<option value="">Seleccionar</option>';
+    (items || []).forEach(function (item) {
+      const opt = doc.createElement('option');
+      opt.value = String(item.id);
+      opt.textContent = String(item.name || 'Sin nombre') + ' (#' + String(item.id) + ')';
+      selectEl.appendChild(opt);
+    });
+    if (current) selectEl.value = current;
+  }
+
+  async function loadAllProducts(storeId) {
+    const r = await fetch('/api/admin/products/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data.items) ? data.items : [];
+  }
+
+  async function loadAllCategories(storeId) {
+    const r = await fetch('/api/admin/categories/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data.items) ? data.items : [];
+  }
+
+  function dispatch(type, payload) {
+    if (!(window.parent && window.parent !== window)) return;
+    ADMIN_ALLOWED_ORIGINS.forEach(function (origin) {
+      try {
+        window.parent.postMessage({ type: type, payload: payload }, origin);
+      } catch (_) {}
+    });
+  }
+
+  function dispatchHandshake() {
+    dispatch(ACTION_CONNECTED);
+    dispatch(ACTION_READY);
+  }
+
+  function waitFor(type, timeoutMs) {
+    const ms = Math.max(100, Number(timeoutMs || 0));
+    return new Promise(function (resolve, reject) {
+      const timeoutId = window.setTimeout(function () {
+        window.removeEventListener('message', onMessage);
+        reject(new Error(type + ' timeout'));
+      }, ms);
+
+      function onMessage(event) {
+        if (!event || !ADMIN_ALLOWED_ORIGINS.includes(event.origin)) return;
+        const data = event && event.data;
+        if (!data || data.type !== type) return;
+        window.clearTimeout(timeoutId);
+        window.removeEventListener('message', onMessage);
+        resolve(data.payload || {});
+      }
+
+      window.addEventListener('message', onMessage);
+    });
+  }
+
+  async function resolveStoreIdViaNexo() {
+    if (!(window.parent && window.parent !== window)) return null;
+
+    const nexoLib = window['@tiendanube/nexo'];
+    if (CLIENT_ID && nexoLib && typeof nexoLib.create === 'function') {
+      const nexo = nexoLib.create({ clientId: CLIENT_ID, log: false });
+      await nexoLib.connect(nexo, 5000);
+      nexoLib.iAmReady(nexo);
+      const storeInfo = await nexoLib.getStoreInfo(nexo);
+      return storeInfo && storeInfo.id ? sanitizeStoreId(storeInfo.id) : null;
+    }
+
+    dispatchHandshake();
+    waitFor(ACTION_CONNECTED, 3500).catch(function () {});
+    try {
+      const storeInfo = await (function () {
+        const info = waitFor(ACTION_STORE_INFO, 3000);
+        dispatch(ACTION_STORE_INFO);
+        return info;
+      })();
+      return storeInfo && storeInfo.id ? sanitizeStoreId(storeInfo.id) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function hydrateFormFromConfig(storeId) {
+    const preselected = {};
+    try {
+      const cfgRes = await fetch('/api/config/' + encodeURIComponent(storeId), { cache: 'no-store' });
+      if (cfgRes.ok) {
+        const c = await cfgRes.json();
+        if (c.enable_envio_rule != null) $('enable_envio_rule').checked = !!c.enable_envio_rule;
+        if (c.enable_cuotas_rule != null) $('enable_cuotas_rule').checked = !!c.enable_cuotas_rule;
+        if (c.enable_regalo_rule != null) $('enable_regalo_rule').checked = !!c.enable_regalo_rule;
+
+        if (c.envio_min_amount != null) $('envio_min_amount').value = Number(c.envio_min_amount);
+        if (c.envio_scope) $('envio_scope').value = String(c.envio_scope);
+        if (c.envio_text_prefix != null) $('envio_text_prefix').value = String(c.envio_text_prefix || '');
+        if (c.envio_text_suffix != null) $('envio_text_suffix').value = String(c.envio_text_suffix || '');
+        if (c.envio_text_reached != null) $('envio_text_reached').value = String(c.envio_text_reached || '');
+        if (c.envio_bar_color) $('envio_bar_color').value = String(c.envio_bar_color);
+
+        if (c.cuotas_threshold_amount != null) $('cuotas_threshold_amount').value = Number(c.cuotas_threshold_amount);
+        if (c.cuotas_scope) $('cuotas_scope').value = String(c.cuotas_scope);
+        if (c.cuotas_text_prefix != null) $('cuotas_text_prefix').value = String(c.cuotas_text_prefix || '');
+        if (c.cuotas_text_suffix != null) $('cuotas_text_suffix').value = String(c.cuotas_text_suffix || '');
+        if (c.cuotas_text_reached != null) $('cuotas_text_reached').value = String(c.cuotas_text_reached || '');
+        if (c.cuotas_bar_color) $('cuotas_bar_color').value = String(c.cuotas_bar_color);
+
+        if (c.regalo_mode) $('regalo_mode').value = String(c.regalo_mode);
+        if (c.regalo_min_amount != null) $('regalo_min_amount').value = Number(c.regalo_min_amount);
+        if (c.regalo_target_type) $('regalo_target_type').value = String(c.regalo_target_type);
+        if (c.regalo_target_qty != null) $('regalo_target_qty').value = Number(c.regalo_target_qty);
+        if (c.regalo_text_prefix != null) $('regalo_text_prefix').value = String(c.regalo_text_prefix || '');
+        if (c.regalo_text_suffix != null) $('regalo_text_suffix').value = String(c.regalo_text_suffix || '');
+        if (c.regalo_text_reached != null) $('regalo_text_reached').value = String(c.regalo_text_reached || '');
+        if (c.regalo_bar_color) $('regalo_bar_color').value = String(c.regalo_bar_color);
+
+        preselected.envio_category_id = String(c.envio_category_id || '');
+        preselected.envio_product_id = String(c.envio_product_id || '');
+        preselected.cuotas_category_id = String(c.cuotas_category_id || '');
+        preselected.cuotas_product_id = String(c.cuotas_product_id || '');
+        preselected.regalo_primary_product_id = String(c.regalo_primary_product_id || '');
+        preselected.regalo_secondary_product_id = String(c.regalo_secondary_product_id || '');
+        preselected.regalo_target_product_id = String(c.regalo_target_product_id || '');
+        preselected.regalo_target_category_id = String(c.regalo_target_category_id || '');
+        preselected.regalo_gift_product_id = String(c.regalo_gift_product_id || '');
+      }
+    } catch (_) {}
+
+    toggleScope($('envio_scope').value, $('envio_product_wrap'), $('envio_category_wrap'));
+    toggleScope($('cuotas_scope').value, $('cuotas_product_wrap'), $('cuotas_category_wrap'));
+    toggleRegaloMode();
+
+    try {
+      const selectsToDisable = [
+        'envio_product_id',
+        'envio_category_id',
+        'cuotas_product_id',
+        'cuotas_category_id',
+        'regalo_primary_product_id',
+        'regalo_secondary_product_id',
+        'regalo_target_product_id',
+        'regalo_target_category_id',
+        'regalo_gift_product_id',
+      ];
+
+      selectsToDisable.forEach(function (id) {
+        const el = $(id);
+        if (!el) return;
+        el.disabled = true;
+        el.innerHTML = '<option value="">Cargando...</option>';
+      });
+
+      const [products, categories] = await Promise.all([
+        loadAllProducts(storeId),
+        loadAllCategories(storeId),
+      ]);
+
+      [
+        'envio_product_id',
+        'cuotas_product_id',
+        'regalo_primary_product_id',
+        'regalo_secondary_product_id',
+        'regalo_target_product_id',
+        'regalo_gift_product_id',
+      ].forEach(function (id) { fillSelect($(id), products); });
+
+      [
+        'envio_category_id',
+        'cuotas_category_id',
+        'regalo_target_category_id',
+      ].forEach(function (id) { fillSelect($(id), categories); });
+
+      selectsToDisable.forEach(function (id) {
+        const el = $(id);
+        if (el) el.disabled = false;
+      });
+
+      Object.keys(preselected).forEach(function (key) {
+        const el = $(key);
+        if (el && preselected[key]) el.value = preselected[key];
+      });
+    } catch (_) {}
+  }
+
+  function bindSaveAjax() {
+    const form = $('settingsForm');
+    const btn = $('saveBtn');
+    if (!form || !btn) return;
+
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      setNexoError('');
+
+      const storeId = sanitizeStoreId($('storeId').value || '');
+      if (!storeId) {
+        showToast('Store ID pendiente', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Guardando...';
+
+      try {
+        const fd = new FormData(form);
+        const body = new URLSearchParams();
+        fd.forEach(function (value, key) {
+          body.append(key, String(value));
+        });
+
+        const res = await fetch('/admin/save', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            Accept: 'application/json',
+          },
+          body: body.toString(),
+        });
+
+        const data = await res.json().catch(function () { return null; });
+        if (!res.ok) {
+          const msg = (data && (data.error || data.message)) ? String(data.error || data.message) : 'Save failed';
+          showToast('No se pudo guardar', 'error');
+          setNexoError(msg);
+          return;
+        }
+
+        showToast('Guardado', 'ok');
+      } catch (err) {
+        void err;
+        showToast('No se pudo guardar', 'error');
+        setNexoError('Save failed');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Guardar configuración';
+      }
+    });
+  }
+
+  function boot() {
+    initViews();
+    initTabs();
+    bindSaveAjax();
+
+    const envioScopeInput = $('envio_scope');
+    const cuotasScopeInput = $('cuotas_scope');
+    const regaloModeInput = $('regalo_mode');
+    const regaloTargetTypeInput = $('regalo_target_type');
+
+    if (envioScopeInput) {
+      envioScopeInput.addEventListener('change', function () {
+        toggleScope(envioScopeInput.value, $('envio_product_wrap'), $('envio_category_wrap'));
+      });
+    }
+    if (cuotasScopeInput) {
+      cuotasScopeInput.addEventListener('change', function () {
+        toggleScope(cuotasScopeInput.value, $('cuotas_product_wrap'), $('cuotas_category_wrap'));
+      });
+    }
+    if (regaloModeInput) regaloModeInput.addEventListener('change', toggleRegaloMode);
+    if (regaloTargetTypeInput) regaloTargetTypeInput.addEventListener('change', toggleRegaloTargetType);
+
+    // Saved toast for non-JS saves (fallback).
+    try {
+      const u = new URL(window.location.href);
+      if (u.searchParams.get('saved') === '1') {
+        showToast('Guardado', 'ok');
+        u.searchParams.delete('saved');
+        window.history.replaceState({}, '', u.toString());
+      }
+    } catch (_) {}
+
+    async function loadBootstrap() {
+      try {
+        const r = await fetch('/api/admin/bootstrap', { cache: 'no-store' });
+        if (!r.ok) return;
+        const b = await r.json();
+        if (b && b.clientId) CLIENT_ID = String(b.clientId);
+        if (b && Array.isArray(b.allowedOrigins) && b.allowedOrigins.length) ADMIN_ALLOWED_ORIGINS = b.allowedOrigins;
+        if (b && b.supportEmail) SUPPORT_EMAIL = String(b.supportEmail || '').trim();
+      } catch (_) {}
+    }
+
+    function parseInitialStoreIdFromUrl() {
+      try {
+        const u = new URL(window.location.href);
+        return sanitizeStoreId(u.searchParams.get('store_id') || u.searchParams.get('store') || '');
+      } catch (_) {
+        return '';
+      }
+    }
+
+    (async function initStore() {
+      await loadBootstrap();
+
+      const storeIdInput = $('storeId');
+      const storeIdLabel = $('storeLabel');
+
+      const initialStoreId = sanitizeStoreId(parseInitialStoreIdFromUrl() || cfg.initialStoreId || storeIdInput.value || '');
+      if (storeIdInput && initialStoreId) storeIdInput.value = initialStoreId;
+      if (storeIdLabel && initialStoreId) storeIdLabel.textContent = initialStoreId;
+
+      let resolved = initialStoreId;
+      try {
+        const fromNexo = await resolveStoreIdViaNexo();
+        if (fromNexo) resolved = fromNexo;
+      } catch (_) {}
+
+      if (storeIdInput && resolved) storeIdInput.value = resolved;
+      if (storeIdLabel && resolved) storeIdLabel.textContent = resolved;
+
+      if (!resolved) {
+        setNexoError('No se pudo inicializar Nexo. Verifica la URL dentro del Admin de Tiendanube.');
+        return;
+      }
+
+      await hydrateFormFromConfig(resolved);
+
+      // Contact actions (after bootstrap so SUPPORT_EMAIL is fresh).
+      const mailBtn = $('supportEmailBtn');
+      if (mailBtn && SUPPORT_EMAIL) {
+        mailBtn.href = 'mailto:' + encodeURIComponent(SUPPORT_EMAIL);
+      }
+    })();
+  }
+
+  if (doc.readyState === 'loading') {
+    doc.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
