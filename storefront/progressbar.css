@@ -2,18 +2,32 @@
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  padding: 12px;
-  margin: 0 0 16px;
+  padding: 10px;
+  margin: 0 0 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   font-family: Helvetica, Arial, sans-serif;
+  width: 100%;
+  max-width: 100%;
+}
+
+.tn-progressbar,
+.tn-progressbar * {
+  box-sizing: border-box;
+}
+
+.tn-progressbar__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .tn-progressbar__text {
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.35;
   color: #223;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .tn-progressbar__text strong {
@@ -22,7 +36,7 @@
 
 .tn-progressbar__track {
   width: 100%;
-  height: 11px;
+  height: 9px;
   border-radius: 999px;
   background: #eef1f5;
   overflow: hidden;
@@ -48,5 +62,26 @@
 @media (prefers-reduced-motion: reduce) {
   .tn-progressbar__fill {
     transition: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .tn-progressbar {
+    padding: 8px;
+    border-radius: 9px;
+    margin: 0 0 10px;
+  }
+
+  .tn-progressbar__list {
+    gap: 8px;
+  }
+
+  .tn-progressbar__text {
+    font-size: 12px;
+    margin-bottom: 5px;
+  }
+
+  .tn-progressbar__track {
+    height: 8px;
   }
 }

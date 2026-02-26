@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-25-17';
+  const APP_VERSION = '2026-02-26-03';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -195,8 +195,10 @@
     const cuotasScope = String(cfg.cuotas_scope || 'all');
     const regaloMode = String(cfg.regalo_mode || 'combo_products');
 
-    if (cfg.enable_envio_rule !== false && envioScope !== 'all') return true;
-    if (cfg.enable_cuotas_rule !== false && cuotasScope !== 'all') return true;
+    // Product-scope rules can be evaluated locally using cart DOM. Only
+    // category-scope (and regalo rules) require server-side evaluation.
+    if (cfg.enable_envio_rule !== false && envioScope === 'category') return true;
+    if (cfg.enable_cuotas_rule !== false && cuotasScope === 'category') return true;
 
     if (cfg.enable_regalo_rule !== false) {
       if (regaloMode === 'combo_products') {
@@ -254,6 +256,7 @@
       domObserver: null,
       maintenanceTimer: null,
       lastRendered: null,
+      lastRenderedByKey: {},
       forceLocalUntil: 0,
       barHiddenUntilConfig: false,
       // Timestamp of the last strong non-empty signal. Start at 0 so an empty
@@ -329,6 +332,7 @@
               keep_visible_ms_left: Math.max(0, (state.keepVisibleUntil || 0) - Date.now()),
               last_subtotal_raw: state.lastSubtotalRaw,
               last_rendered: state.lastRendered,
+              last_rendered_keys: Object.keys(state.lastRenderedByKey || {}),
               has_last_remote: !!state.lastRemote,
               last_eval_key: state.lastEvalKey,
               eval_in_flight: !!state.evalInFlight,
@@ -451,22 +455,27 @@
     }
 
     function isCartEmpty() {
-      // During quantity changes, Tiendanube can briefly show the empty view.
-      // Keep bar visible during that transient window.
-      if (Date.now() < state.keepVisibleUntil) return false;
-
+      const now = Date.now();
       const lsCount = getLsItemCount();
       const emptyState = q('.js-empty-ajax-cart');
       const emptyVisible = !!(emptyState && isVisible(emptyState));
       const hasItems = hasCartItems();
       const subtotal = getSubtotalAmount();
 
-      if ((lsCount != null && lsCount > 0) || hasItems || (subtotal != null && subtotal > 0)) {
-        state.lastEvidenceAt = Date.now();
+      const hasEvidence = ((lsCount != null && lsCount > 0) || hasItems || (subtotal != null && subtotal > 0));
+      const strongEmpty = emptyVisible && !hasItems && !hasEvidence;
+
+      // During quantity changes, Tiendanube can briefly show the empty view.
+      // Keep the bar visible during that transient window, but allow the cart
+      // to become empty when the empty state is strongly visible.
+      if (now < state.keepVisibleUntil && !strongEmpty) return false;
+
+      if (hasEvidence) {
+        state.lastEvidenceAt = now;
       }
 
       const empty = decideEmpty({
-        now: Date.now(),
+        now,
         lastEvidenceAt: state.lastEvidenceAt,
         // Be more conservative before declaring the cart empty to avoid
         // flicker while the theme re-renders the cart and subtotal.
@@ -482,7 +491,7 @@
         const prev = state._lastEmpty;
         if (prev == null || prev !== empty) {
           state._lastEmpty = empty;
-          dbg('empty:state', { empty, lsCount, hasItems, subtotal, emptyVisible, stableMs: 500 }, 'info');
+          dbg('empty:state', { empty, lsCount, hasItems, subtotal, emptyVisible, strongEmpty, stableMs: 500 }, 'info');
         }
       }
 
@@ -527,9 +536,8 @@
         if (changed) state.lastSubtotalRaw = raw;
 
         // Only re-render when something changed; observers handle most cases.
-        const fill = wrapper && wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-fill') || wrapper.querySelector('.tn-progressbar__fill,.js-pb-fill')) : null;
-        const text = wrapper && wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-text') || wrapper.querySelector('.tn-progressbar__text,.js-pb-text')) : null;
-        if (changed || !fill || !text) {
+        const list = wrapper && wrapper.querySelector ? wrapper.querySelector('[data-pb-list="1"]') : null;
+        if (changed || !list) {
           scheduleRender();
           scheduleRemoteEval();
         }
@@ -680,6 +688,12 @@
         return null;
       }
 
+      // If the cart is empty, don't mount (or keep) an empty white box.
+      if (isCartEmpty()) {
+        removeBar();
+        return null;
+      }
+
       // Search ONLY inside the active cart container (themes often duplicate carts).
       let existing = container.querySelector ? container.querySelector('#app-barra-progreso') : null;
       if (existing && !doc.body.contains(existing)) {
@@ -705,12 +719,7 @@
       const wrapper = doc.createElement('div');
       wrapper.id = 'app-barra-progreso';
       wrapper.className = 'tn-progressbar app-barra-progreso-wrapper';
-      wrapper.innerHTML = [
-        '<div class="tn-progressbar__text js-pb-text" id="tn-progressbar-text">&nbsp;</div>',
-        '<div class="tn-progressbar__track">',
-        '  <div class="tn-progressbar__fill js-pb-fill" id="tn-progressbar-fill"></div>',
-        '</div>',
-      ].join('');
+      wrapper.innerHTML = '<div class="tn-progressbar__list" data-pb-list="1"></div>';
 
       const root = container;
       const panel = root.querySelector ? root.querySelector('.js-ajax-cart-panel') : null;
@@ -770,119 +779,319 @@
       } catch (_) {}
     }
 
-    function buildUiResult(total) {
+    function toUiAmountResult(key, eligibleSubtotal, threshold, cfg, options) {
+      const opt = options || {};
+      const color = String(opt.color || '#2563eb');
+      const missing = Math.max(0, threshold - eligibleSubtotal);
+      const reached = missing <= 0;
+      const prefix = String(opt.text_prefix || '').trim();
+      const suffix = String(opt.text_suffix || '').trim();
+      const reachedText = String(opt.text_reached || '').trim();
+
+      if (reached) {
+        return {
+          key,
+          pct: 100,
+          message: reachedText || String(opt.default_reached || ''),
+          color,
+        };
+      }
+
+      const msg = `${prefix || 'Te faltan'} <strong>$${money(missing)}</strong> ${suffix || String(opt.default_suffix || '')}`.trim();
+      return {
+        key,
+        pct: clampPct((eligibleSubtotal / threshold) * 100),
+        message: msg,
+        color,
+      };
+    }
+
+    function sumEligibleForProduct(productId) {
+      const pid = String(productId || '').trim();
+      if (!pid) return { qty: 0, subtotal: 0 };
+      const items = buildDomItemsSnapshot();
+      if (!items || !items.length) return { qty: 0, subtotal: 0 };
+      let qty = 0;
+      let subtotal = 0;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i] || {};
+        if (String(it.product_id || '') !== pid) continue;
+        const q0 = Math.max(0, Number(it.quantity || 0));
+        const l0 = Math.max(0, Number(it.line_total || 0));
+        qty += q0;
+        subtotal += l0;
+      }
+      return { qty, subtotal };
+    }
+
+    function buildLocalEnvio(total, cfg) {
+      if (!cfg || cfg.enable_envio_rule === false) return null;
+      const scope = String(cfg.envio_scope || 'all');
+      const threshold = Math.max(0, pickThreshold(cfg.envio_min_amount, cfg.monto_envio_gratis));
+      if (threshold <= 0) return null;
+
+      if (scope === 'all') {
+        if (total <= 0) return null;
+        return toUiAmountResult('envio', total, threshold, cfg, {
+          color: cfg.envio_bar_color || '#2563eb',
+          text_prefix: cfg.envio_text_prefix,
+          text_suffix: cfg.envio_text_suffix,
+          text_reached: cfg.envio_text_reached,
+          default_suffix: 'para envio gratis.',
+          default_reached: '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
+        });
+      }
+
+      if (scope === 'product') {
+        const target = String(cfg.envio_product_id || '').trim();
+        const sum = sumEligibleForProduct(target);
+        if (!sum.qty) return null;
+        return toUiAmountResult('envio', sum.subtotal, threshold, cfg, {
+          color: cfg.envio_bar_color || '#2563eb',
+          text_prefix: cfg.envio_text_prefix,
+          text_suffix: cfg.envio_text_suffix,
+          text_reached: cfg.envio_text_reached,
+          default_suffix: 'para envio gratis.',
+          default_reached: '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
+        });
+      }
+
+      return null;
+    }
+
+    function buildLocalCuotas(total, cfg) {
+      if (!cfg || cfg.enable_cuotas_rule === false) return null;
+      const scope = String(cfg.cuotas_scope || 'all');
+      const threshold = Math.max(0, pickThreshold(cfg.cuotas_threshold_amount, cfg.monto_cuotas));
+      if (threshold <= 0) return null;
+
+      if (scope === 'all') {
+        if (total <= 0) return null;
+        return toUiAmountResult('cuotas', total, threshold, cfg, {
+          color: cfg.cuotas_bar_color || '#0ea5e9',
+          text_prefix: cfg.cuotas_text_prefix,
+          text_suffix: cfg.cuotas_text_suffix,
+          text_reached: cfg.cuotas_text_reached,
+          default_suffix: 'para cuotas sin interes.',
+          default_reached: '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
+        });
+      }
+
+      if (scope === 'product') {
+        const target = String(cfg.cuotas_product_id || '').trim();
+        const sum = sumEligibleForProduct(target);
+        if (!sum.qty) return null;
+        return toUiAmountResult('cuotas', sum.subtotal, threshold, cfg, {
+          color: cfg.cuotas_bar_color || '#0ea5e9',
+          text_prefix: cfg.cuotas_text_prefix,
+          text_suffix: cfg.cuotas_text_suffix,
+          text_reached: cfg.cuotas_text_reached,
+          default_suffix: 'para cuotas sin interes.',
+          default_reached: '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
+        });
+      }
+
+      return null;
+    }
+
+    function buildRemoteAmount(key, remoteRule, defaults) {
+      const r = remoteRule || null;
+      if (!r || !r.enabled) return null;
+      if (r.has_match === false) return null;
+      const d = defaults || {};
+      const color = String(r.bar_color || d.color || '#2563eb');
+      if (r.reached) {
+        return {
+          key,
+          pct: 100,
+          message: String(r.text_reached || d.default_reached || ''),
+          color,
+        };
+      }
+      const pfx = String(r.text_prefix || '').trim();
+      const sfx = String(r.text_suffix || '').trim();
+      return {
+        key,
+        pct: clampPct(Number(r.progress || 0) * 100),
+        message: `${pfx || 'Te faltan'} <strong>$${money(r.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
+        color,
+      };
+    }
+
+    function buildRemoteRegalo(remoteRule) {
+      const r = remoteRule || null;
+      if (!r || !r.enabled) return null;
+      const color = String(r.bar_color || '#a855f7');
+      if (r.reached) {
+        return {
+          key: 'regalo',
+          pct: 100,
+          message: String(r.text_reached || '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>'),
+          color,
+        };
+      }
+      const pfx = String(r.text_prefix || '').trim();
+      const sfx = String(r.text_suffix || '').trim();
+      return {
+        key: 'regalo',
+        pct: clampPct(Number(r.progress || 0) * 100),
+        message: `${pfx || 'Te faltan'} <strong>$${money(r.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
+        color,
+      };
+    }
+
+    function buildUiResults(total) {
       const cfg = state.config;
-      const localEnvio = buildLocalEnvioResult(total, cfg);
-      const localCuotas = buildLocalCuotasResult(total, cfg);
       const preferLocalOnly = Date.now() < state.forceLocalUntil;
 
       if (!state.configLoaded) {
-        // Don't show defaults while config is still loading.
-        dbg('ui:cfg_missing', null, 'debug');
-        return state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
+        const prev = state.lastRenderedByKey || {};
+        return Object.keys(prev).map(function (k) { return prev[k]; }).filter(Boolean);
       }
 
-      if (debugEnabled) {
+      const out = [];
+      const envioLocal = buildLocalEnvio(total, cfg);
+      const cuotasLocal = buildLocalCuotas(total, cfg);
+      if (envioLocal) out.push(envioLocal);
+      if (cuotasLocal) out.push(cuotasLocal);
+
+      const remoteOk = !preferLocalOnly && state.lastRemote && Math.abs(Number(state.lastRemote.cart_total || 0) - total) < 0.01;
+      if (remoteOk) {
+        const remote = state.lastRemote || {};
         const envioScope = String((cfg && cfg.envio_scope) || 'all');
         const cuotasScope = String((cfg && cfg.cuotas_scope) || 'all');
-        const envioThreshold = Math.max(0, pickThreshold(cfg && cfg.envio_min_amount, cfg && cfg.monto_envio_gratis));
-        const cuotasThreshold = Math.max(0, pickThreshold(cfg && cfg.cuotas_threshold_amount, cfg && cfg.monto_cuotas));
-        dbg('ui:local', {
-          total,
-          preferLocalOnly,
-          envio: {
-            enabled: cfg ? cfg.enable_envio_rule : null,
-            scope: envioScope,
-            threshold: envioThreshold,
-            product_id: cfg ? cfg.envio_product_id : null,
-            category_id: cfg ? cfg.envio_category_id : null,
-            pct: localEnvio ? localEnvio.pct : null,
-          },
-          cuotas: {
-            enabled: cfg ? cfg.enable_cuotas_rule : null,
-            scope: cuotasScope,
-            threshold: cuotasThreshold,
-            product_id: cfg ? cfg.cuotas_product_id : null,
-            category_id: cfg ? cfg.cuotas_category_id : null,
-            pct: localCuotas ? localCuotas.pct : null,
-          },
-        }, 'debug');
-      }
 
-      if (!preferLocalOnly && state.lastRemote && Math.abs(Number(state.lastRemote.cart_total || 0) - total) < 0.01) {
-        const remote = state.lastRemote;
-        if (remote.regalo && remote.regalo.enabled) {
-          dbg('ui:remote', { type: 'regalo', scope: remote.regalo.scope || null, progress: remote.regalo.progress, eligible: remote.regalo.eligible_subtotal }, 'debug');
-          const color = String(remote.regalo.bar_color || '#a855f7');
-          if (remote.regalo.reached) {
-            return {
-              pct: 100,
-              message: String(remote.regalo.text_reached || '<span class="tn-progressbar__ok">Regalo desbloqueado.</span>'),
-              color,
-            };
-          }
-          const pfx = String(remote.regalo.text_prefix || '').trim();
-          const sfx = String(remote.regalo.text_suffix || '').trim();
-          return {
-            pct: clampPct(Number(remote.regalo.progress || 0) * 100),
-            message: `${pfx || 'Te faltan'} <strong>$${money(remote.regalo.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
-            color,
-          };
+        if (!envioLocal && envioScope === 'category') {
+          const rEnvio = buildRemoteAmount('envio', remote.envio, {
+            color: '#2563eb',
+            default_reached: '<span class="tn-progressbar__ok">Envio gratis activado.</span>',
+          });
+          if (rEnvio) out.push(rEnvio);
         }
 
-        if (remote.cuotas && remote.cuotas.enabled && remote.cuotas.scope !== 'all') {
-          dbg('ui:remote', { type: 'cuotas', scope: remote.cuotas.scope, progress: remote.cuotas.progress, eligible: remote.cuotas.eligible_subtotal }, 'debug');
-          const color = String(remote.cuotas.bar_color || '#0ea5e9');
-          if (remote.cuotas.reached) {
-            return {
-              pct: 100,
-              message: String(remote.cuotas.text_reached || '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>'),
-              color,
-            };
-          }
-          const pfx = String(remote.cuotas.text_prefix || '').trim();
-          const sfx = String(remote.cuotas.text_suffix || '').trim();
-          return {
-            pct: clampPct(Number(remote.cuotas.progress || 0) * 100),
-            message: `${pfx || 'Te faltan'} <strong>$${money(remote.cuotas.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
-            color,
-          };
+        if (!cuotasLocal && cuotasScope === 'category') {
+          const rCuotas = buildRemoteAmount('cuotas', remote.cuotas, {
+            color: '#0ea5e9',
+            default_reached: '<span class="tn-progressbar__ok">Cuotas sin interes activadas.</span>',
+          });
+          if (rCuotas) out.push(rCuotas);
         }
 
-        if (remote.envio && remote.envio.enabled && remote.envio.scope !== 'all') {
-          dbg('ui:remote', { type: 'envio', scope: remote.envio.scope, progress: remote.envio.progress, eligible: remote.envio.eligible_subtotal }, 'debug');
-          const color = String(remote.envio.bar_color || '#2563eb');
-          if (remote.envio.reached) {
-            return {
-              pct: 100,
-              message: String(remote.envio.text_reached || '<span class="tn-progressbar__ok">Envio gratis activado.</span>'),
-              color,
-            };
-          }
-          const pfx = String(remote.envio.text_prefix || '').trim();
-          const sfx = String(remote.envio.text_suffix || '').trim();
-          return {
-            pct: clampPct(Number(remote.envio.progress || 0) * 100),
-            message: `${pfx || 'Te faltan'} <strong>$${money(remote.envio.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
-            color,
-          };
+        const rRegalo = buildRemoteRegalo(remote.regalo);
+        if (rRegalo) out.push(rRegalo);
+      }
+
+      return out;
+    }
+
+    function normalizeUiResults(results) {
+      const list = Array.isArray(results) ? results : [];
+      const byKey = {};
+      for (let i = 0; i < list.length; i++) {
+        const r = list[i];
+        if (!r || !r.key) continue;
+        byKey[String(r.key)] = r;
+      }
+      const order = { envio: 0, cuotas: 1, regalo: 2 };
+      return Object.keys(byKey).sort(function (a, b) {
+        const ai = Object.prototype.hasOwnProperty.call(order, a) ? order[a] : 99;
+        const bi = Object.prototype.hasOwnProperty.call(order, b) ? order[b] : 99;
+        if (ai != bi) return ai - bi;
+        return String(a).localeCompare(String(b));
+      }).map(function (k) { return byKey[k]; });
+    }
+
+    function ensureListNode(wrapper) {
+      if (!wrapper) return null;
+      let list = wrapper.querySelector ? wrapper.querySelector('[data-pb-list="1"]') : null;
+      if (list) return list;
+      // Older versions might have single-bar markup. Repair to multi list.
+      try {
+        wrapper.innerHTML = '<div class="tn-progressbar__list" data-pb-list="1"></div>';
+      } catch (_) {}
+      list = wrapper.querySelector ? wrapper.querySelector('[data-pb-list="1"]') : null;
+      return list || null;
+    }
+
+    function ensureItemNode(list, key) {
+      if (!list || !key) return null;
+      const k = String(key);
+      let item = list.querySelector ? list.querySelector('[data-pb-key="' + k + '"]') : null;
+      if (item) return item;
+
+      try {
+        item = doc.createElement('div');
+        item.className = 'tn-progressbar__item';
+        item.setAttribute('data-pb-key', k);
+        item.innerHTML = [
+          '<div class="tn-progressbar__text js-pb-text">&nbsp;</div>',
+          '<div class="tn-progressbar__track">',
+          '  <div class="tn-progressbar__fill js-pb-fill"></div>',
+          '</div>',
+        ].join('');
+        list.appendChild(item);
+      } catch (_) {
+        return null;
+      }
+
+      return item;
+    }
+
+    function renderUiResults(wrapper, results) {
+      const list = ensureListNode(wrapper);
+      if (!list) return false;
+
+      const normalized = normalizeUiResults(results);
+      const keep = {};
+
+      for (let i = 0; i < normalized.length; i++) {
+        const r = normalized[i];
+        if (!r || !r.key) continue;
+        const key = String(r.key);
+        keep[key] = true;
+
+        const item = ensureItemNode(list, key);
+        if (!item) continue;
+
+        const fill = item.querySelector ? item.querySelector('.tn-progressbar__fill,.js-pb-fill') : null;
+        const text = item.querySelector ? item.querySelector('.tn-progressbar__text,.js-pb-text') : null;
+        if (!fill || !text) continue;
+
+        fill.style.width = String(clampPct(r.pct)) + '%';
+        fill.style.backgroundImage = 'none';
+        fill.style.backgroundColor = r.color || '#2563eb';
+        text.innerHTML = r.message || '&nbsp;';
+      }
+
+      // Remove stale items (avoid duplicate/confusing old bars).
+      try {
+        const children = list.querySelectorAll ? list.querySelectorAll('[data-pb-key]') : [];
+        for (let i = 0; i < (children ? children.length : 0); i++) {
+          const n = children[i];
+          const k = n && n.getAttribute ? n.getAttribute('data-pb-key') : null;
+          if (!k || keep[k]) continue;
+          if (n && n.parentNode) n.parentNode.removeChild(n);
         }
-      }
+      } catch (_) {}
 
-      // If admin config exists, never fall back to default copy/colors.
-      if (state.configLoaded) {
-        dbg('ui:pick', { localEnvio: !!localEnvio, localCuotas: !!localCuotas }, 'debug');
-        return localEnvio || localCuotas || null;
-      }
+      if (!normalized.length) return false;
 
-      return renderDefault(total, cfg);
+      const nextByKey = {};
+      for (let i = 0; i < normalized.length; i++) {
+        const r = normalized[i];
+        if (!r || !r.key) continue;
+        nextByKey[String(r.key)] = r;
+      }
+      state.lastRenderedByKey = nextByKey;
+      state.lastRendered = normalized[0] || null;
+      return true;
     }
 
     function renderNow() {
       dbg('render:call', { open: isCartOpen() }, 'debug');
       if (isCartEmpty()) {
-        // Keep DOM node to avoid flicker; just hide it.
-        setBarVisible(false);
+        // Empty cart: remove the UI completely (no white box).
+        removeBar();
         dbg('render:empty', {
           keepMsLeft: Math.max(0, (state.keepVisibleUntil || 0) - Date.now()),
           lsCount: getLsItemCount(),
@@ -893,6 +1102,8 @@
             return !!(emptyState && isVisible(emptyState));
           })(),
         }, 'info');
+        state.lastRenderedByKey = {};
+        state.lastRendered = null;
         state.barHiddenUntilConfig = false;
         if (state.evalTimer) {
           try { clearTimeout(state.evalTimer); } catch (_) {}
@@ -904,30 +1115,13 @@
         }
         return;
       }
+
       const wrapper = ensureBarMounted();
       if (!wrapper) {
         dbg('render:no_wrapper', null);
         return;
       }
       dbg('render:wrapper', { wrapper: elSummary(wrapper), container: elSummary(getCartContainer()) }, 'debug');
-
-      let fill = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-fill') || wrapper.querySelector('.tn-progressbar__fill,.js-pb-fill')) : null;
-      let text = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-text') || wrapper.querySelector('.tn-progressbar__text,.js-pb-text')) : null;
-      if (!fill || !text) {
-        // Cart rerenders can temporarily wipe our inner nodes. Repair in-place.
-        dbg('render:missing_nodes', null, 'warn');
-        try {
-          wrapper.innerHTML = [
-            '<div class="tn-progressbar__text js-pb-text" id="tn-progressbar-text">&nbsp;</div>',
-            '<div class="tn-progressbar__track">',
-            '  <div class="tn-progressbar__fill js-pb-fill" id="tn-progressbar-fill"></div>',
-            '</div>',
-          ].join('');
-        } catch (_) {}
-        fill = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-fill') || wrapper.querySelector('.tn-progressbar__fill,.js-pb-fill')) : null;
-        text = wrapper.querySelector ? (wrapper.querySelector('#tn-progressbar-text') || wrapper.querySelector('.tn-progressbar__text,.js-pb-text')) : null;
-        if (!fill || !text) return;
-      }
 
       // Always force visible when cart is not empty.
       state.barHiddenUntilConfig = false;
@@ -936,45 +1130,37 @@
       const total = getCurrentTotal();
       dbg('render:total', { total }, 'debug');
       if (total == null || total < 1) {
-        // During cart ajax rerenders, totals can disappear or still be zero
-        // momentarily even when there are items in the cart. Avoid using a
-        // zero total for goal calculations, which would show “missing” equal
-        // to the full threshold and a visually “broken” bar. Instead, keep
-        // the last rendered state (or a neutral placeholder) until a valid
-        // total is available.
-        const fallback = state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
-        fill.style.width = `${clampPct(fallback.pct)}%`;
-        fill.style.backgroundImage = 'none';
-        fill.style.backgroundColor = fallback.color || '#2563eb';
-        text.innerHTML = fallback.message || '&nbsp;';
-        state.lastRendered = fallback;
+        // During AJAX rerenders, totals can disappear momentarily. Keep the last
+        // rendered UI (if any) to avoid showing wrong default content.
+        const prev = state.lastRenderedByKey || {};
+        const fallback = Object.keys(prev).map(function (k) { return prev[k]; }).filter(Boolean);
+        if (fallback.length) {
+          renderUiResults(wrapper, fallback);
+          return;
+        }
+        setBarVisible(false, wrapper);
         return;
       }
 
-      const result = buildUiResult(total);
-      dbg('render:ui', { hasResult: !!result }, 'debug');
-      if (!result) {
-        // When the cart is not empty but there is no specific rule to show
-        // (or config is in an intermediate state), keep the bar visible with
-        // a neutral fallback instead of hiding it. This avoids flicker and
-        // “missing bar” glitches while configuration or remote evaluation
-        // catch up.
-        setBarVisible(true, wrapper);
-        const fallback = state.lastRendered || { pct: 0, message: '&nbsp;', color: '#2563eb' };
-        fill.style.width = `${clampPct(fallback.pct)}%`;
-        fill.style.backgroundImage = 'none';
-        fill.style.backgroundColor = fallback.color || '#2563eb';
-        text.innerHTML = fallback.message || '&nbsp;';
-        state.lastRendered = fallback;
+      const results = buildUiResults(total);
+      const ok = renderUiResults(wrapper, results);
+      dbg('render:ui', { count: Array.isArray(results) ? results.length : 0, rendered: ok }, 'debug');
+
+      if (ok) return;
+
+      // No applicable goals right now. Avoid flicker during pulses by keeping
+      // last rendered results while the cart settles.
+      const prev = state.lastRenderedByKey || {};
+      const fallback = Object.keys(prev).map(function (k) { return prev[k]; }).filter(Boolean);
+      if (fallback.length && Date.now() < state.keepVisibleUntil) {
+        renderUiResults(wrapper, fallback);
         return;
       }
 
-      fill.style.width = `${clampPct(result.pct)}%`;
-      fill.style.backgroundImage = 'none';
-      fill.style.backgroundColor = result.color || '#2563eb';
-      text.innerHTML = result.message || '&nbsp;';
-      state.lastRendered = result;
-      dbg('render:done', { pct: result.pct, color: result.color, width: fill.style.width }, 'info');
+      // Stable empty: hide and clear.
+      state.lastRenderedByKey = {};
+      state.lastRendered = null;
+      setBarVisible(false, wrapper);
     }
 
     function scheduleRender() {

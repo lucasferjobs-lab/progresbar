@@ -2,7 +2,7 @@
   if (window.__TN_PROGRESSBAR_BOOTSTRAPPED__) return;
   window.__TN_PROGRESSBAR_BOOTSTRAPPED__ = true;
 
-  const BUILD_VERSION = '2026-02-25-17';
+  const BUILD_VERSION = '2026-02-26-03';
   window.__TN_PROGRESSBAR_VERSION__ = BUILD_VERSION;
 
   const currentScript = document.currentScript;
