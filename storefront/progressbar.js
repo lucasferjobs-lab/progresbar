@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-26-03';
+  const APP_VERSION = '2026-02-26-04';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -984,6 +984,49 @@
       return out;
     }
 
+    function canKeepGoalKey(key) {
+      const cfg = state.config;
+      if (!cfg) return true;
+      const k = String(key || '');
+      if (k === 'envio') {
+        if (cfg.enable_envio_rule === false) return false;
+        const threshold = Math.max(0, pickThreshold(cfg.envio_min_amount, cfg.monto_envio_gratis));
+        if (threshold <= 0) return false;
+        const scope = String(cfg.envio_scope || 'all');
+        if (scope === 'product') return !!String(cfg.envio_product_id || '').trim();
+        if (scope === 'category') return !!String(cfg.envio_category_id || '').trim();
+        return true;
+      }
+      if (k === 'cuotas') {
+        if (cfg.enable_cuotas_rule === false) return false;
+        const threshold = Math.max(0, pickThreshold(cfg.cuotas_threshold_amount, cfg.monto_cuotas));
+        if (threshold <= 0) return false;
+        const scope = String(cfg.cuotas_scope || 'all');
+        if (scope === 'product') return !!String(cfg.cuotas_product_id || '').trim();
+        if (scope === 'category') return !!String(cfg.cuotas_category_id || '').trim();
+        return true;
+      }
+      if (k === 'regalo') {
+        if (cfg.enable_regalo_rule === false) return false;
+        // Only keep when the rule is actually configured; otherwise it should disappear quickly.
+        const mode = String(cfg.regalo_mode || 'combo_products').trim();
+        if (mode === 'combo_products') {
+          const min = Math.max(0, Number(cfg.regalo_min_amount || 0));
+          const p1 = String(cfg.regalo_primary_product_id || '').trim();
+          const p2 = String(cfg.regalo_secondary_product_id || '').trim();
+          return min > 0 && !!p1 && !!p2;
+        }
+        if (mode === 'target_rule') {
+          const qty = Math.max(0, Number(cfg.regalo_target_qty || 0));
+          const p = String(cfg.regalo_target_product_id || '').trim();
+          const c = String(cfg.regalo_target_category_id || '').trim();
+          return qty > 0 && (!!p || !!c);
+        }
+        return true;
+      }
+      return true;
+    }
+
     function normalizeUiResults(results) {
       const list = Array.isArray(results) ? results : [];
       const byKey = {};
@@ -1143,8 +1186,31 @@
       }
 
       const results = buildUiResults(total);
-      const ok = renderUiResults(wrapper, results);
-      dbg('render:ui', { count: Array.isArray(results) ? results.length : 0, rendered: ok }, 'debug');
+      let merged = Array.isArray(results) ? results.slice() : [];
+
+      // During cart updates, Tiendanube can briefly render incomplete DOM (items missing)
+      // which would temporarily drop one of the goals. Keep previously-rendered goals
+      // during that burst to avoid a bar disappearing and reappearing.
+      const preserveMissing = Date.now() < state.keepVisibleUntil || !!state.evalInFlight;
+      if (preserveMissing) {
+        const seen = {};
+        for (let i = 0; i < merged.length; i++) {
+          const r = merged[i];
+          if (r && r.key) seen[String(r.key)] = true;
+        }
+        const prev = state.lastRenderedByKey || {};
+        const keys = Object.keys(prev);
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          if (seen[k]) continue;
+          if (!canKeepGoalKey(k)) continue;
+          const r = prev[k];
+          if (r) merged.push(r);
+        }
+      }
+
+      const ok = renderUiResults(wrapper, merged);
+      dbg('render:ui', { count: Array.isArray(merged) ? merged.length : 0, rendered: ok }, 'debug');
 
       if (ok) return;
 
