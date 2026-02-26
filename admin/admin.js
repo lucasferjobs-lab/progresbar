@@ -52,6 +52,25 @@
     el.style.display = '';
   }
 
+  function setSettingsLocked(locked, message) {
+    const form = $('settingsForm');
+    const saveBtn = $('saveBtn');
+
+    if (saveBtn) saveBtn.disabled = !!locked;
+
+    if (form) {
+      const fields = form.querySelectorAll('input,select,textarea');
+      for (let i = 0; i < fields.length; i++) {
+        const el = fields[i];
+        if (!el) continue;
+        if (el.id === 'storeId') continue;
+        el.disabled = !!locked;
+      }
+    }
+
+    if (locked && message) setNexoError(message);
+  }
+
   function initViews() {
     const buttons = Array.prototype.slice.call(doc.querySelectorAll('[data-pb-nav=\"1\"][data-pb-view]'));
     const panels = Array.prototype.slice.call(doc.querySelectorAll('[data-pb-view-panel]'));
@@ -147,6 +166,10 @@
 
   async function loadAllProducts(storeId) {
     const r = await fetch('/api/admin/products/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+    if (r && r.status === 402) {
+      setSettingsLocked(true, 'Pago requerido. Verifica la facturación de la app en Tiendanube.');
+      return [];
+    }
     if (!r.ok) return [];
     const data = await r.json();
     return Array.isArray(data.items) ? data.items : [];
@@ -154,6 +177,10 @@
 
   async function loadAllCategories(storeId) {
     const r = await fetch('/api/admin/categories/' + encodeURIComponent(storeId) + '/all', { cache: 'no-store' });
+    if (r && r.status === 402) {
+      setSettingsLocked(true, 'Pago requerido. Verifica la facturación de la app en Tiendanube.');
+      return [];
+    }
     if (!r.ok) return [];
     const data = await r.json();
     return Array.isArray(data.items) ? data.items : [];
@@ -222,10 +249,25 @@
 
   async function hydrateFormFromConfig(storeId) {
     const preselected = {};
+    let billingLocked = false;
     try {
       const cfgRes = await fetch('/api/config/' + encodeURIComponent(storeId), { cache: 'no-store' });
       if (cfgRes.ok) {
         const c = await cfgRes.json();
+        billingLocked = (function () {
+          if (!c || c.billing_active !== false) return false;
+          const until = c.billing_override_until;
+          if (!until) return true;
+          const ms = Date.parse(String(until));
+          if (!Number.isFinite(ms)) return true;
+          return ms <= Date.now();
+        })();
+        if (billingLocked) {
+          setSettingsLocked(true, 'Pago requerido. Verifica la facturación de la app en Tiendanube.');
+        } else {
+          setSettingsLocked(false);
+        }
+
         if (c.enable_envio_rule != null) $('enable_envio_rule').checked = !!c.enable_envio_rule;
         if (c.enable_cuotas_rule != null) $('enable_cuotas_rule').checked = !!c.enable_cuotas_rule;
         if (c.enable_regalo_rule != null) $('enable_regalo_rule').checked = !!c.enable_regalo_rule;
@@ -253,6 +295,16 @@
         if (c.regalo_text_reached != null) $('regalo_text_reached').value = String(c.regalo_text_reached || '');
         if (c.regalo_bar_color) $('regalo_bar_color').value = String(c.regalo_bar_color);
 
+        if (c.ui_bg_color) $('ui_bg_color').value = String(c.ui_bg_color);
+        if (c.ui_border_color) $('ui_border_color').value = String(c.ui_border_color);
+        if (c.ui_track_color) $('ui_track_color').value = String(c.ui_track_color);
+        if (c.ui_text_color) $('ui_text_color').value = String(c.ui_text_color);
+        if (c.ui_bar_height != null) $('ui_bar_height').value = Number(c.ui_bar_height);
+        if (c.ui_radius != null) $('ui_radius').value = Number(c.ui_radius);
+        if (c.ui_shadow != null) $('ui_shadow').checked = !!c.ui_shadow;
+        if (c.ui_animation != null) $('ui_animation').checked = !!c.ui_animation;
+        if (c.ui_compact != null) $('ui_compact').checked = !!c.ui_compact;
+
         preselected.envio_category_id = String(c.envio_category_id || '');
         preselected.envio_product_id = String(c.envio_product_id || '');
         preselected.cuotas_category_id = String(c.cuotas_category_id || '');
@@ -268,6 +320,8 @@
     toggleScope($('envio_scope').value, $('envio_product_wrap'), $('envio_category_wrap'));
     toggleScope($('cuotas_scope').value, $('cuotas_product_wrap'), $('cuotas_category_wrap'));
     toggleRegaloMode();
+
+    if (billingLocked) return;
 
     try {
       const selectsToDisable = [
@@ -375,10 +429,63 @@
     });
   }
 
+  function bindCouponRedeem() {
+    const btn = $('couponRedeemBtn');
+    const input = $('couponCode');
+    if (!btn || !input) return;
+
+    btn.addEventListener('click', async function () {
+      setNexoError('');
+      const storeId = sanitizeStoreId($('storeId').value || '');
+      const code = String(input.value || '').trim().toUpperCase();
+
+      if (!storeId) {
+        showToast('Store ID pendiente', 'error');
+        return;
+      }
+      if (!code) {
+        showToast('Cupón inválido', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.textContent = 'Aplicando...';
+
+      try {
+        const res = await fetch('/api/billing/redeem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ store_id: storeId, code: code }),
+        });
+
+        const data = await res.json().catch(function () { return null; });
+        if (!res.ok) {
+          const msg = data && (data.error || data.message) ? String(data.error || data.message) : 'Cupón inválido';
+          showToast('Cupón inválido', 'error');
+          setNexoError(msg);
+          return;
+        }
+
+        input.value = '';
+        showToast('Cupón aplicado', 'ok');
+        setSettingsLocked(false);
+        await hydrateFormFromConfig(storeId);
+      } catch (_) {
+        showToast('Cupón inválido', 'error');
+        setNexoError('Cupón inválido');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev || 'Aplicar cupón';
+      }
+    });
+  }
+
   function boot() {
     initViews();
     initTabs();
     bindSaveAjax();
+    bindCouponRedeem();
 
     const envioScopeInput = $('envio_scope');
     const cuotasScopeInput = $('cuotas_scope');

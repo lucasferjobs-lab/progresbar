@@ -47,9 +47,65 @@
                 <input type="hidden" name="store_id" id="storeId" value="" />
 
                 <div class="pb-tabs">
+                  <button type="button" class="tab-btn" data-tab-target="tab-style">Diseño</button>
                   <button type="button" class="tab-btn active" data-tab-target="tab-envio">Envío gratis</button>
                   <button type="button" class="tab-btn" data-tab-target="tab-cuotas">Cuotas</button>
                   <button type="button" class="tab-btn" data-tab-target="tab-regalo">Regalo</button>
+                </div>
+
+                <div id="tab-style" class="tab-panel">
+                  <div class="pb-grid">
+                    <div class="pb-field">
+                      <label for="ui_bg_color">Fondo</label>
+                      <input id="ui_bg_color" type="color" name="ui_bg_color" value="#ffffff" />
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_border_color">Borde</label>
+                      <input id="ui_border_color" type="color" name="ui_border_color" value="#e5e7eb" />
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_track_color">Track</label>
+                      <input id="ui_track_color" type="color" name="ui_track_color" value="#eef1f5" />
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_text_color">Texto</label>
+                      <input id="ui_text_color" type="color" name="ui_text_color" value="#0b1220" />
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_bar_height">Altura (px)</label>
+                      <input id="ui_bar_height" type="number" min="6" max="24" name="ui_bar_height" value="10" />
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_radius">Radio (px)</label>
+                      <input id="ui_radius" type="number" min="0" max="40" name="ui_radius" value="14" />
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_shadow" type="checkbox" name="ui_shadow" value="1" checked />
+                        <span>Sombra</span>
+                      </label>
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_animation" type="checkbox" name="ui_animation" value="1" checked />
+                        <span>Animación</span>
+                      </label>
+                    </div>
+
+                    <div class="pb-field" style="grid-column: 1 / -1;">
+                      <label class="pb-toggle">
+                        <input id="ui_compact" type="checkbox" name="ui_compact" value="1" />
+                        <span>Modo compacto</span>
+                      </label>
+                    </div>
+                  </div>
                 </div>
 
                 <div id="tab-envio" class="tab-panel active">
@@ -269,6 +325,16 @@
               <div class="pb-contact">
                 <a id="supportEmailBtn" class="pb-linkbtn" href="#">Enviar email</a>
                 <button type="button" class="pb-linkbtn" data-pb-jump="faq">Ver FAQ</button>
+              </div>
+
+              <div class="pb-divider"></div>
+
+              <div class="pb-coupon">
+                <div class="pb-field">
+                  <label for="couponCode">Cupón</label>
+                  <input id="couponCode" type="text" autocomplete="off" />
+                </div>
+                <button type="button" class="pb-primary" id="couponRedeemBtn">Aplicar cupón</button>
               </div>
 
               <p class="pb-muted" style="margin-top: 12px;"><strong>FRANFER Soluciones</strong></p>

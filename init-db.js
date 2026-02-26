@@ -9,6 +9,14 @@ const schemaQueries = [
       monto_envio_gratis DECIMAL DEFAULT 50000,
       monto_regalo DECIMAL DEFAULT 100000,
       monto_cuotas DECIMAL DEFAULT 80000,
+      billing_active BOOLEAN DEFAULT TRUE,
+      billing_reason VARCHAR(64),
+      billing_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      billing_checked_at TIMESTAMP,
+      billing_override_until TIMESTAMP,
+      billing_override_reason VARCHAR(64),
+      billing_override_code VARCHAR(64),
+      billing_override_updated_at TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );`,
 
@@ -78,8 +86,38 @@ const schemaQueries = [
       regalo_text_prefix VARCHAR(255),
       regalo_text_suffix VARCHAR(255),
       regalo_text_reached VARCHAR(255),
+      ui_bg_color VARCHAR(32),
+      ui_border_color VARCHAR(32),
+      ui_track_color VARCHAR(32),
+      ui_text_color VARCHAR(32),
+      ui_bar_height INTEGER DEFAULT 10,
+      ui_radius INTEGER DEFAULT 14,
+      ui_shadow BOOLEAN DEFAULT TRUE,
+      ui_animation BOOLEAN DEFAULT TRUE,
+      ui_compact BOOLEAN DEFAULT FALSE,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );`,
+
+  `CREATE TABLE IF NOT EXISTS billing_coupons (
+      code VARCHAR(32) PRIMARY KEY,
+      free_days INTEGER NOT NULL CHECK (free_days > 0 AND free_days <= 365),
+      max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+      used_count INTEGER DEFAULT 0,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );`,
+
+  `CREATE TABLE IF NOT EXISTS billing_coupon_redemptions (
+      id SERIAL PRIMARY KEY,
+      coupon_code VARCHAR(32) NOT NULL REFERENCES billing_coupons(code) ON DELETE CASCADE,
+      store_id VARCHAR(255) NOT NULL REFERENCES tiendas(store_id) ON DELETE CASCADE,
+      free_days INTEGER NOT NULL,
+      redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      override_until TIMESTAMP,
+      UNIQUE (coupon_code, store_id)
+  );`,
+
+  `CREATE INDEX IF NOT EXISTS billing_coupon_redemptions_store_id_idx ON billing_coupon_redemptions (store_id);`,
 
   `CREATE INDEX IF NOT EXISTS user_sessions_user_id_idx ON user_sessions (user_id);`,
   `CREATE INDEX IF NOT EXISTS user_sessions_expires_at_idx ON user_sessions (expires_at);`,

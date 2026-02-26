@@ -6,6 +6,52 @@
   parseCookies,
   isValidEmail,
 } = require('./auth');
+const crypto = require('crypto');
+
+let portalCouponTablesReady = false;
+
+async function ensureBillingCouponTables(pool) {
+  if (portalCouponTablesReady) return;
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS billing_coupons (
+      code VARCHAR(32) PRIMARY KEY,
+      free_days INTEGER NOT NULL CHECK (free_days > 0 AND free_days <= 365),
+      max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+      used_count INTEGER DEFAULT 0,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS billing_coupon_redemptions (
+      id SERIAL PRIMARY KEY,
+      coupon_code VARCHAR(32) NOT NULL REFERENCES billing_coupons(code) ON DELETE CASCADE,
+      store_id VARCHAR(255) NOT NULL REFERENCES tiendas(store_id) ON DELETE CASCADE,
+      free_days INTEGER NOT NULL,
+      redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      override_until TIMESTAMP,
+      UNIQUE (coupon_code, store_id)
+    );
+  `);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS billing_coupon_redemptions_store_id_idx ON billing_coupon_redemptions (store_id);`);
+
+  portalCouponTablesReady = true;
+}
+
+function normalizeCouponCode(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 32);
+}
+
+function generateCouponCode() {
+  return crypto.randomBytes(6).toString('hex').toUpperCase();
+}
 
 function esc(value) {
   return String(value == null ? '' : value)
@@ -221,6 +267,8 @@ function registerPortalRoutes(app, pool, opts) {
   });
 
   app.get('/sa', async (req, res) => {
+    await ensureBillingCouponTables(pool);
+
     const users = await pool.query(
       `SELECT id, email, is_super_admin, is_active, created_at
        FROM users
@@ -243,8 +291,25 @@ function registerPortalRoutes(app, pool, opts) {
        LIMIT 300`
     );
 
+    const coupons = await pool.query(
+      `SELECT code, free_days, max_uses, used_count, is_active, created_at
+       FROM billing_coupons
+       ORDER BY created_at DESC
+       LIMIT 200`
+    );
+
     const userRows = users.rows.map((u) => `<tr><td>${u.id}</td><td>${esc(u.email)}</td><td>${u.is_super_admin ? 'si' : 'no'}</td><td>${u.is_active ? 'activo' : 'inactivo'}</td></tr>`).join('');
     const storeRows = stores.rows.map((s) => `<tr><td>${esc(s.store_id)}</td><td>${esc(s.members || '-')}</td><td>${Number(s.monto_envio_gratis)}</td><td>${Number(s.monto_regalo)}</td><td><a href="https://admin.tiendanube.com/apps/${esc(clientId)}/admin?store_id=${esc(s.store_id)}" target="_blank" rel="noreferrer">Abrir app</a></td></tr>`).join('');
+    const couponRows = coupons.rows.map((c) => {
+      const maxUses = c.max_uses == null ? '-' : Number(c.max_uses);
+      const used = Number(c.used_count || 0);
+      const active = c.is_active !== false;
+      return `<tr><td><code>${esc(c.code)}</code></td><td>${Number(c.free_days)}</td><td>${esc(maxUses)}</td><td>${used}</td><td>${active ? 'si' : 'no'}</td><td>
+        <form method="POST" action="/sa/coupons/${encodeURIComponent(String(c.code))}/toggle">
+          <button type="submit">${active ? 'Desactivar' : 'Activar'}</button>
+        </form>
+      </td></tr>`;
+    }).join('');
 
     const html = shellView('Super Admin', `
 <header><strong>Super Admin</strong> - ${esc(req.sessionUser.email)} - <a style="color:#93c5fd" href="/auth/logout">Salir</a></header>
@@ -274,6 +339,15 @@ function registerPortalRoutes(app, pool, opts) {
       </form>
       <p class="muted">Si la tienda no existe en DB, se crea placeholder automáticamente.</p>
     </section>
+    <section class="card">
+      <h3>Cupones</h3>
+      <form method="POST" action="/sa/coupons" class="row">
+        <input name="code" placeholder="codigo (opcional)" />
+        <input type="number" min="1" max="365" name="free_days" placeholder="dias" required />
+        <input type="number" min="1" name="max_uses" placeholder="max usos (opcional)" />
+        <button type="submit">Crear</button>
+      </form>
+    </section>
   </div>
 
   <section class="card">
@@ -291,9 +365,63 @@ function registerPortalRoutes(app, pool, opts) {
       <tbody>${storeRows || '<tr><td colspan="5">Sin tiendas</td></tr>'}</tbody>
     </table>
   </section>
+
+  <section class="card">
+    <h3>Cupones</h3>
+    <table>
+      <thead><tr><th>Codigo</th><th>Dias</th><th>Max usos</th><th>Usados</th><th>Activo</th><th>Accion</th></tr></thead>
+      <tbody>${couponRows || '<tr><td colspan="6">Sin cupones</td></tr>'}</tbody>
+    </table>
+  </section>
 </main>`);
 
     return res.status(200).send(html);
+  });
+
+  app.post('/sa/coupons', async (req, res) => {
+    await ensureBillingCouponTables(pool);
+
+    let code = normalizeCouponCode(req.body.code);
+    if (!code) code = generateCouponCode();
+
+    const freeDays = Math.round(Number(req.body.free_days || 0));
+    const maxUsesRaw = req.body.max_uses;
+    const maxUses = maxUsesRaw == null || String(maxUsesRaw).trim() === '' ? null : Math.round(Number(maxUsesRaw));
+
+    if (!code || code.length < 6) return res.status(400).send('Codigo invalido');
+    if (!Number.isFinite(freeDays) || freeDays < 1 || freeDays > 365) return res.status(400).send('Dias invalidos');
+    if (maxUses != null && (!Number.isFinite(maxUses) || maxUses < 1)) return res.status(400).send('Max usos invalido');
+
+    const insert = await pool.query(
+      `INSERT INTO billing_coupons (code, free_days, max_uses, used_count, is_active)
+       VALUES ($1, $2, $3, 0, TRUE)
+       ON CONFLICT (code) DO NOTHING
+       RETURNING code`,
+      [code, freeDays, maxUses]
+    );
+    if (!insert.rows[0]) return res.status(409).send('Cupon ya existe');
+
+    console.info('[billing] coupon_created', { code, free_days: freeDays, max_uses: maxUses });
+    return res.redirect(302, '/sa');
+  });
+
+  app.post('/sa/coupons/:code/toggle', async (req, res) => {
+    await ensureBillingCouponTables(pool);
+
+    const code = normalizeCouponCode(req.params.code);
+    if (!code) return res.status(400).send('Codigo invalido');
+
+    const result = await pool.query(
+      `UPDATE billing_coupons
+       SET is_active = NOT is_active
+       WHERE code = $1
+       RETURNING code, is_active`,
+      [code]
+    );
+    if (!result.rows[0]) return res.status(404).send('Cupon no encontrado');
+
+    console.info('[billing] coupon_toggled', { code, is_active: result.rows[0].is_active });
+    return res.redirect(302, '/sa');
   });
 
   app.post('/sa/users', async (req, res) => {

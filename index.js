@@ -34,6 +34,19 @@ const ADMIN_ALLOWED_ORIGINS = [
 const oauthStateStore = new Map();
 const evaluateGoalsCache = new Map();
 let goalSettingsTableReady = false;
+let tiendasBillingColumnsReady = false;
+let billingCouponTablesReady = false;
+
+const BILLING_LOG_THROTTLE_MS = Number(process.env.BILLING_LOG_THROTTLE_MS || 10 * 60 * 1000);
+const billingLogThrottle = new Map();
+
+function logBillingThrottled(event, key, details) {
+  const now = Date.now();
+  const last = billingLogThrottle.get(key) || 0;
+  if (now - last < BILLING_LOG_THROTTLE_MS) return;
+  billingLogThrottle.set(key, now);
+  console.info(`[billing] ${event}`, details);
+}
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.warn('[WARN] Missing TIENDANUBE_CLIENT_ID or TIENDANUBE_CLIENT_SECRET in environment.');
@@ -42,8 +55,12 @@ if (!APP_BASE_URL) {
   console.warn('[WARN] APP_BASE_URL is empty. Use a stable HTTPS public domain in production.');
 }
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+function rawBodySaver(req, _res, buf) {
+  if (buf && buf.length) req.rawBody = buf;
+}
+
+app.use(express.json({ verify: rawBodySaver }));
+app.use(express.urlencoded({ extended: true, verify: rawBodySaver }));
 
 // --- INICIO DEL FIX DE SEGURIDAD PARA EL IFRAME ---
 app.use((req, res, next) => {
@@ -70,6 +87,74 @@ app.use((req, res, next) => {
   next();
 });
 // --- FIN DEL FIX DE SEGURIDAD ---
+
+function timingSafeEqualStr(a, b) {
+  const aa = Buffer.from(String(a || ''), 'utf8');
+  const bb = Buffer.from(String(b || ''), 'utf8');
+  if (aa.length !== bb.length) return false;
+  return crypto.timingSafeEqual(aa, bb);
+}
+
+function verifyTiendanubeWebhook(req) {
+  const secret = String(CLIENT_SECRET || '');
+  if (!secret) return false;
+
+  const provided = String(req.get('X-Linkedstore-Hmac-Sha256') || '').trim();
+  if (!provided) return false;
+
+  const raw = req.rawBody;
+  if (!raw || !Buffer.isBuffer(raw)) return false;
+
+  const expected = crypto.createHmac('sha256', secret).update(raw).digest('base64');
+  return timingSafeEqualStr(provided, expected);
+}
+
+function parseWebhookEvent(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const event = String(b.event || b.topic || b.type || '').trim();
+  const storeId = String(b.store_id || b.storeId || b.store || '').replace(/[^0-9]/g, '');
+  return { event, storeId, body: b };
+}
+
+app.post('/webhooks/tiendanube', async (req, res) => {
+  // Always ACK quickly; Tiendanube retries on non-2xx.
+  try {
+    if (!verifyTiendanubeWebhook(req)) {
+      console.warn('[billing] webhook_invalid_signature');
+      return res.sendStatus(401);
+    }
+
+    const { event, storeId } = parseWebhookEvent(req.body);
+    if (!event || !storeId) return res.sendStatus(200);
+    console.info('[billing] webhook', { event, store_id: storeId });
+
+    if (event === 'app/uninstalled') {
+      // Delete store data. FKs cascade to settings/memberships.
+      await pool.query('DELETE FROM tiendas WHERE store_id = $1', [storeId]);
+      evaluateGoalsCache.clear();
+      console.info('[billing] app_uninstalled', { store_id: storeId });
+      return res.sendStatus(200);
+    }
+
+    if (event === 'app/suspended') {
+      await setStoreBillingStatus(storeId, false, 'suspended');
+      evaluateGoalsCache.clear();
+      return res.sendStatus(200);
+    }
+
+    if (event === 'app/resumed') {
+      await setStoreBillingStatus(storeId, true, 'resumed');
+      evaluateGoalsCache.clear();
+      return res.sendStatus(200);
+    }
+
+    // Other topics (e.g. subscription/updated) are currently ignored.
+    return res.sendStatus(200);
+  } catch (err) {
+    console.error('[webhook] failed:', err && err.message ? err.message : err);
+    return res.sendStatus(200);
+  }
+});
 
 // CORS for storefront script/config/evaluation fetches from merchant domains.
 app.use(['/api/config', '/api/goals'], (req, res, next) => {
@@ -128,6 +213,112 @@ app.get('/api/admin/bootstrap', (_req, res) => {
     allowedOrigins: ADMIN_ALLOWED_ORIGINS,
     supportEmail: SUPPORT_EMAIL,
   });
+});
+
+app.post('/api/billing/redeem', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
+  const storeId = String(req.body.store_id || req.body.storeId || '').replace(/[^0-9]/g, '');
+  const code = String(req.body.code || req.body.coupon || req.body.coupon_code || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 32);
+
+  if (!storeId || !code) return res.status(400).json({ error: 'Missing store_id or code' });
+
+  await ensureTiendasBillingColumns();
+  await ensureBillingCouponTables();
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const storeRes = await client.query(
+      `SELECT store_id, billing_override_until
+       FROM tiendas
+       WHERE store_id = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [storeId]
+    );
+    if (!storeRes.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Store not found' });
+    }
+
+    const couponRes = await client.query(
+      `SELECT code, free_days, max_uses, used_count, is_active
+       FROM billing_coupons
+       WHERE code = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [code]
+    );
+    const coupon = couponRes.rows[0];
+    if (!coupon || coupon.is_active === false) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Invalid coupon' });
+    }
+
+    const maxUses = coupon.max_uses == null ? null : Number(coupon.max_uses);
+    const usedCount = Number(coupon.used_count || 0);
+    if (Number.isFinite(maxUses) && maxUses > 0 && usedCount >= maxUses) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Coupon exhausted' });
+    }
+
+    const already = await client.query(
+      `SELECT 1
+       FROM billing_coupon_redemptions
+       WHERE coupon_code = $1 AND store_id = $2
+       LIMIT 1`,
+      [code, storeId]
+    );
+    if (already.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Coupon already redeemed' });
+    }
+
+    const days = Math.max(1, Math.min(365, Math.round(Number(coupon.free_days || 0))));
+    if (!days) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid coupon days' });
+    }
+
+    await client.query(`UPDATE billing_coupons SET used_count = used_count + 1 WHERE code = $1`, [code]);
+
+    const untilRes = await client.query(
+      `UPDATE tiendas
+       SET billing_override_until = GREATEST(NOW(), COALESCE(billing_override_until, NOW())) + ($2::int * INTERVAL '1 day'),
+           billing_override_reason = 'coupon',
+           billing_override_code = $1,
+           billing_override_updated_at = NOW()
+       WHERE store_id = $3
+       RETURNING billing_override_until`,
+      [code, days, storeId]
+    );
+    const until = untilRes.rows[0] ? untilRes.rows[0].billing_override_until : null;
+
+    await client.query(
+      `INSERT INTO billing_coupon_redemptions (coupon_code, store_id, free_days, override_until)
+       VALUES ($1, $2, $3, $4)`,
+      [code, storeId, days, until]
+    );
+
+    await client.query('COMMIT');
+
+    console.info('[billing] coupon_redeemed', { store_id: storeId, code, free_days: days, override_until: until });
+    return res.status(200).json({ ok: true, store_id: storeId, code, free_days: days, override_until: until });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[billing] coupon_redeem_failed:', err && err.message ? err.message : err);
+    return res.status(500).json({ error: 'Redeem failed' });
+  } finally {
+    client.release();
+  }
 });
 
 function randomState() {
@@ -216,6 +407,15 @@ async function ensureGoalSettingsTable() {
       regalo_text_prefix VARCHAR(255),
       regalo_text_suffix VARCHAR(255),
       regalo_text_reached VARCHAR(255),
+      ui_bg_color VARCHAR(32),
+      ui_border_color VARCHAR(32),
+      ui_track_color VARCHAR(32),
+      ui_text_color VARCHAR(32),
+      ui_bar_height INTEGER DEFAULT 10,
+      ui_radius INTEGER DEFAULT 14,
+      ui_shadow BOOLEAN DEFAULT TRUE,
+      ui_animation BOOLEAN DEFAULT TRUE,
+      ui_compact BOOLEAN DEFAULT FALSE,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -248,8 +448,133 @@ async function ensureGoalSettingsTable() {
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text_prefix VARCHAR(255);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text_suffix VARCHAR(255);`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS regalo_text_reached VARCHAR(255);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_bg_color VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_border_color VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_track_color VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_text_color VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_bar_height INTEGER DEFAULT 10;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_radius INTEGER DEFAULT 14;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_shadow BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_animation BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_compact BOOLEAN DEFAULT FALSE;`);
 
   goalSettingsTableReady = true;
+}
+
+async function ensureTiendasBillingColumns() {
+  if (tiendasBillingColumnsReady) return;
+
+  // Billing is enforced by Tiendanube (402 Payment Required). We still keep a local
+  // flag so we can disable the UI/logic immediately without relying on API calls.
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_active BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_reason VARCHAR(64);`);
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_checked_at TIMESTAMP;`);
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_override_until TIMESTAMP;`);
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_override_reason VARCHAR(64);`);
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_override_code VARCHAR(64);`);
+  await pool.query(`ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS billing_override_updated_at TIMESTAMP;`);
+
+  tiendasBillingColumnsReady = true;
+}
+
+async function setStoreBillingStatus(storeId, active, reason) {
+  const sid = String(storeId || '').replace(/[^0-9]/g, '');
+  if (!sid) return false;
+  await ensureTiendasBillingColumns();
+
+  const result = await pool.query(
+    `UPDATE tiendas
+     SET billing_active = $1,
+         billing_reason = $2,
+         billing_updated_at = NOW(),
+         billing_checked_at = NOW()
+     WHERE store_id = $3
+       AND (billing_active IS DISTINCT FROM $1 OR billing_reason IS DISTINCT FROM $2)
+     RETURNING billing_active, billing_reason`,
+    [!!active, reason ? String(reason).slice(0, 64) : null, sid]
+  );
+
+  if (result && result.rows && result.rows[0]) {
+    console.info('[billing] status_changed', {
+      store_id: sid,
+      billing_active: result.rows[0].billing_active,
+      billing_reason: result.rows[0].billing_reason || null,
+    });
+  }
+
+  return true;
+}
+
+function toTimeMs(value) {
+  try {
+    if (!value) return 0;
+    if (value instanceof Date) return value.getTime();
+    const d = new Date(value);
+    const ms = d.getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function isStoreEntitled(billingRow) {
+  if (!billingRow) return true;
+  if (billingRow.billing_active !== false) return true;
+  const untilMs = toTimeMs(billingRow.billing_override_until);
+  return untilMs > Date.now();
+}
+
+async function getStoreBillingStatus(storeId) {
+  const sid = String(storeId || '').replace(/[^0-9]/g, '');
+  if (!sid) return null;
+  await ensureTiendasBillingColumns();
+  const r = await pool.query(
+    `SELECT billing_active,
+            billing_reason,
+            billing_updated_at,
+            billing_checked_at,
+            billing_override_until,
+            billing_override_reason,
+            billing_override_code,
+            billing_override_updated_at
+     FROM tiendas
+     WHERE store_id = $1
+     LIMIT 1`,
+    [sid]
+  );
+  return r.rows[0] || null;
+}
+
+async function ensureBillingCouponTables() {
+  if (billingCouponTablesReady) return;
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS billing_coupons (
+      code VARCHAR(32) PRIMARY KEY,
+      free_days INTEGER NOT NULL CHECK (free_days > 0 AND free_days <= 365),
+      max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+      used_count INTEGER DEFAULT 0,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS billing_coupon_redemptions (
+      id SERIAL PRIMARY KEY,
+      coupon_code VARCHAR(32) NOT NULL REFERENCES billing_coupons(code) ON DELETE CASCADE,
+      store_id VARCHAR(255) NOT NULL REFERENCES tiendas(store_id) ON DELETE CASCADE,
+      free_days INTEGER NOT NULL,
+      redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      override_until TIMESTAMP,
+      UNIQUE (coupon_code, store_id)
+    );
+  `);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS billing_coupon_redemptions_store_id_idx ON billing_coupon_redemptions (store_id);`);
+
+  billingCouponTablesReady = true;
 }
 
 async function getStoreAccessToken(storeId) {
@@ -289,6 +614,7 @@ function parseCollection(data, keys) {
 }
 
 async function upsertStore(storeId, accessToken) {
+  await ensureTiendasBillingColumns();
   await pool.query(
     `INSERT INTO tiendas (store_id, access_token)
      VALUES ($1, $2)
@@ -392,7 +718,16 @@ async function fetchProductCategories(storeId, accessToken, productId) {
     'Content-Type': 'application/json',
   };
 
-  const resp = await axios.get(url, { headers, timeout: 8000 });
+  let resp;
+  try {
+    resp = await axios.get(url, { headers, timeout: 8000 });
+  } catch (error) {
+    const status = error && error.response && error.response.status;
+    if (status === 402) {
+      await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
+    }
+    throw error;
+  }
   const product = resp.data || {};
   const categories = Array.isArray(product.categories)
     ? product.categories.map((c) => String((c && c.id) || c)).filter(Boolean)
@@ -431,7 +766,9 @@ async function evaluateAdvancedGoals(storeId, payload) {
       try {
         const remoteCats = await fetchProductCategories(storeId, accessToken, item.product_id);
         return remoteCats.includes(categoryId);
-      } catch (_) {
+      } catch (error) {
+        const status = error && error.response && error.response.status;
+        if (status === 402) throw error;
         return false;
       }
     }
@@ -723,10 +1060,20 @@ app.post('/admin/save', async (req, res) => {
   const regaloTextReached = String(req.body.regalo_text_reached || '').trim();
   const regaloBarColor = String(req.body.regalo_bar_color || '').trim();
 
+  const uiBgColor = String(req.body.ui_bg_color || '').trim();
+  const uiBorderColor = String(req.body.ui_border_color || '').trim();
+  const uiTrackColor = String(req.body.ui_track_color || '').trim();
+  const uiTextColor = String(req.body.ui_text_color || '').trim();
+  const uiBarHeight = Math.max(0, Math.min(24, Math.round(Number(req.body.ui_bar_height || 0))));
+  const uiRadius = Math.max(0, Math.min(40, Math.round(Number(req.body.ui_radius || 0))));
+  const uiShadow = req.body.ui_shadow === '1';
+  const uiAnimation = req.body.ui_animation === '1';
+  const uiCompact = req.body.ui_compact === '1';
+
   if (!storeId) {
     return wantsJson ? res.status(400).json({ error: 'Missing store_id' }) : res.status(400).send('Missing store_id');
   }
-  if ([envioMinAmount, cuotasThresholdAmount, regaloMinAmount, regaloTargetQty].some((n) => Number.isNaN(n) || n < 0)) {
+  if ([envioMinAmount, cuotasThresholdAmount, regaloMinAmount, regaloTargetQty, uiBarHeight, uiRadius].some((n) => Number.isNaN(n) || n < 0)) {
     return wantsJson
       ? res.status(400).json({ error: 'Invalid numeric values' })
       : res.status(400).send('Invalid numeric values');
@@ -734,6 +1081,20 @@ app.post('/admin/save', async (req, res) => {
 
   try {
     await ensureGoalSettingsTable();
+    await ensureTiendasBillingColumns();
+
+    const billing = await getStoreBillingStatus(storeId).catch(() => null);
+    if (billing && !isStoreEntitled(billing)) {
+      logBillingThrottled('blocked', `blocked:${storeId}:/admin/save`, {
+        store_id: storeId,
+        path: '/admin/save',
+        reason: billing.billing_reason || 'inactive',
+        override_until: billing.billing_override_until || null,
+      });
+      return wantsJson
+        ? res.status(402).json({ error: 'Payment required' })
+        : res.status(402).send('Payment required');
+    }
 
     await pool.query(
       `UPDATE tiendas SET monto_envio_gratis = $1, monto_cuotas = $2, monto_regalo = $3 WHERE store_id = $4`,
@@ -775,9 +1136,18 @@ app.post('/admin/save', async (req, res) => {
          regalo_text_prefix,
          regalo_text_suffix,
          regalo_text_reached,
+         ui_bg_color,
+         ui_border_color,
+         ui_track_color,
+         ui_text_color,
+         ui_bar_height,
+         ui_radius,
+         ui_shadow,
+         ui_animation,
+         ui_compact,
          updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13, $14, NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''), $20, $21, NULLIF($22, ''), NULLIF($23, ''), $24, $25, $26, NULLIF($27, ''), $28, $29, NULLIF($30, ''), NULLIF($31, ''), NULLIF($32, ''), NULLIF($33, ''), CURRENT_TIMESTAMP)
+       VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13, $14, NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''), $20, $21, NULLIF($22, ''), NULLIF($23, ''), $24, $25, $26, NULLIF($27, ''), $28, $29, NULLIF($30, ''), NULLIF($31, ''), NULLIF($32, ''), NULLIF($33, ''), NULLIF($34, ''), NULLIF($35, ''), NULLIF($36, ''), NULLIF($37, ''), $38, $39, $40, $41, $42, CURRENT_TIMESTAMP)
        ON CONFLICT (store_id)
        DO UPDATE SET
          enable_envio_rule = EXCLUDED.enable_envio_rule,
@@ -812,6 +1182,15 @@ app.post('/admin/save', async (req, res) => {
          regalo_text_prefix = EXCLUDED.regalo_text_prefix,
          regalo_text_suffix = EXCLUDED.regalo_text_suffix,
          regalo_text_reached = EXCLUDED.regalo_text_reached,
+         ui_bg_color = EXCLUDED.ui_bg_color,
+         ui_border_color = EXCLUDED.ui_border_color,
+         ui_track_color = EXCLUDED.ui_track_color,
+         ui_text_color = EXCLUDED.ui_text_color,
+         ui_bar_height = EXCLUDED.ui_bar_height,
+         ui_radius = EXCLUDED.ui_radius,
+         ui_shadow = EXCLUDED.ui_shadow,
+         ui_animation = EXCLUDED.ui_animation,
+         ui_compact = EXCLUDED.ui_compact,
          updated_at = CURRENT_TIMESTAMP`,
       [
         storeId,
@@ -847,6 +1226,15 @@ app.post('/admin/save', async (req, res) => {
         regaloTextPrefix,
         regaloTextSuffix,
         regaloTextReached,
+        uiBgColor,
+        uiBorderColor,
+        uiTrackColor,
+        uiTextColor,
+        uiBarHeight,
+        uiRadius,
+        uiShadow,
+        uiAnimation,
+        uiCompact,
       ]
     );
 
@@ -870,12 +1258,20 @@ app.get('/api/config/:storeId', async (req, res) => {
 
   try {
     await ensureGoalSettingsTable();
+    await ensureTiendasBillingColumns();
 
     const result = await pool.query(
       `SELECT t.store_id,
               t.monto_envio_gratis,
               t.monto_cuotas,
               t.monto_regalo,
+              t.billing_active,
+              t.billing_reason,
+              t.billing_updated_at,
+              t.billing_override_until,
+              t.billing_override_reason,
+              t.billing_override_code,
+              t.billing_override_updated_at,
               s.enable_envio_rule,
               s.enable_cuotas_rule,
               s.enable_regalo_rule,
@@ -910,7 +1306,16 @@ app.get('/api/config/:storeId', async (req, res) => {
               s.regalo_text,
               s.regalo_text_prefix,
               s.regalo_text_suffix,
-              s.regalo_text_reached
+              s.regalo_text_reached,
+              s.ui_bg_color,
+              s.ui_border_color,
+              s.ui_track_color,
+              s.ui_text_color,
+              s.ui_bar_height,
+              s.ui_radius,
+              s.ui_shadow,
+              s.ui_animation,
+              s.ui_compact
        FROM tiendas t
        LEFT JOIN store_goal_settings s ON s.store_id = t.store_id
        WHERE t.store_id = $1`,
@@ -928,6 +1333,17 @@ app.post('/api/goals/:storeId/evaluate', express.text({ type: 'text/plain' }), a
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
 
   try {
+    const billing = await getStoreBillingStatus(storeId).catch(() => null);
+    if (billing && !isStoreEntitled(billing)) {
+      logBillingThrottled('blocked', `blocked:${storeId}:${req.path}`, {
+        store_id: storeId,
+        path: req.path,
+        reason: billing.billing_reason || 'inactive',
+        override_until: billing.billing_override_until || null,
+      });
+      return res.status(402).json({ error: 'Payment required' });
+    }
+
     let payload = req.body;
     if (typeof payload === 'string') {
       try {
@@ -939,6 +1355,15 @@ app.post('/api/goals/:storeId/evaluate', express.text({ type: 'text/plain' }), a
     const result = await evaluateAdvancedGoalsCached(storeId, payload || {});
     return res.status(200).json(result);
   } catch (error) {
+    const status = error && error.response && error.response.status;
+    if (status === 402) {
+      logBillingThrottled('upstream_402', `upstream_402:${storeId}:evaluate`, {
+        store_id: storeId,
+        path: req.path,
+      });
+      await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
+      return res.status(402).json({ error: 'Payment required' });
+    }
     console.error('[api/goals/evaluate] failed:', error.message);
     return res.status(500).json({ error: 'Failed to evaluate goals' });
   }
@@ -949,6 +1374,17 @@ app.get('/api/admin/products/:storeId/all', async (req, res) => {
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
 
   try {
+    const billing = await getStoreBillingStatus(storeId).catch(() => null);
+    if (billing && !isStoreEntitled(billing)) {
+      logBillingThrottled('blocked', `blocked:${storeId}:${req.path}`, {
+        store_id: storeId,
+        path: req.path,
+        reason: billing.billing_reason || 'inactive',
+        override_until: billing.billing_override_until || null,
+      });
+      return res.status(402).json({ error: 'Payment required' });
+    }
+
     const accessToken = await getStoreAccessToken(storeId);
     if (!accessToken) return res.status(404).json({ error: 'Store token not found' });
 
@@ -971,8 +1407,17 @@ app.get('/api/admin/products/:storeId/all', async (req, res) => {
       if (list.length < pageSize) break;
     }
 
-    return res.status(200).json({ items: all });
+    return res.status(200).json({ items: all.slice(0, 2000) });
   } catch (error) {
+    const status = error && error.response && error.response.status;
+    if (status === 402) {
+      logBillingThrottled('upstream_402', `upstream_402:${storeId}:products`, {
+        store_id: storeId,
+        path: req.path,
+      });
+      await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
+      return res.status(402).json({ error: 'Payment required' });
+    }
     const detail = error.response?.data || error.message;
     return res.status(500).json({ error: 'Load products failed', detail });
   }
@@ -983,6 +1428,17 @@ app.get('/api/admin/categories/:storeId/all', async (req, res) => {
   if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
 
   try {
+    const billing = await getStoreBillingStatus(storeId).catch(() => null);
+    if (billing && !isStoreEntitled(billing)) {
+      logBillingThrottled('blocked', `blocked:${storeId}:${req.path}`, {
+        store_id: storeId,
+        path: req.path,
+        reason: billing.billing_reason || 'inactive',
+        override_until: billing.billing_override_until || null,
+      });
+      return res.status(402).json({ error: 'Payment required' });
+    }
+
     const accessToken = await getStoreAccessToken(storeId);
     if (!accessToken) return res.status(404).json({ error: 'Store token not found' });
 
@@ -1005,8 +1461,17 @@ app.get('/api/admin/categories/:storeId/all', async (req, res) => {
       if (list.length < pageSize) break;
     }
 
-    return res.status(200).json({ items: all });
+    return res.status(200).json({ items: all.slice(0, 2000) });
   } catch (error) {
+    const status = error && error.response && error.response.status;
+    if (status === 402) {
+      logBillingThrottled('upstream_402', `upstream_402:${storeId}:categories`, {
+        store_id: storeId,
+        path: req.path,
+      });
+      await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
+      return res.status(402).json({ error: 'Payment required' });
+    }
     const detail = error.response?.data || error.message;
     return res.status(500).json({ error: 'Load categories failed', detail });
   }

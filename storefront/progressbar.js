@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-26-04';
+  const APP_VERSION = '2026-02-26-05';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -190,6 +190,7 @@
 
   function requiresRemoteEvaluation(cfg) {
     if (!cfg) return false;
+    if (!isBillingEntitled(cfg)) return false;
 
     const envioScope = String(cfg.envio_scope || 'all');
     const cuotasScope = String(cfg.cuotas_scope || 'all');
@@ -216,6 +217,16 @@
     }
 
     return false;
+  }
+
+  function isBillingEntitled(cfg) {
+    if (!cfg) return true;
+    if (cfg.billing_active !== false) return true;
+    const until = cfg.billing_override_until;
+    if (!until) return false;
+    const ms = (until instanceof Date) ? until.getTime() : Date.parse(String(until));
+    if (!Number.isFinite(ms)) return false;
+    return ms > Date.now();
   }
 
   function init(win) {
@@ -257,6 +268,7 @@
       maintenanceTimer: null,
       lastRendered: null,
       lastRenderedByKey: {},
+      lastUiThemeKey: '',
       forceLocalUntil: 0,
       barHiddenUntilConfig: false,
       // Timestamp of the last strong non-empty signal. Start at 0 so an empty
@@ -694,6 +706,12 @@
         return null;
       }
 
+      // If the store is not active in billing, the app must not run.
+      if (state.configLoaded && state.config && !isBillingEntitled(state.config)) {
+        removeBar();
+        return null;
+      }
+
       // Search ONLY inside the active cart container (themes often duplicate carts).
       let existing = container.querySelector ? container.querySelector('#app-barra-progreso') : null;
       if (existing && !doc.body.contains(existing)) {
@@ -777,6 +795,58 @@
           node.style.display = visible ? '' : 'none';
         }
       } catch (_) {}
+    }
+
+    function applyUiTheme(wrapper) {
+      const cfg = state.config || null;
+      if (!cfg || !wrapper || !wrapper.style) return;
+
+      const themeKey = [
+        cfg.ui_bg_color,
+        cfg.ui_border_color,
+        cfg.ui_track_color,
+        cfg.ui_text_color,
+        cfg.ui_bar_height,
+        cfg.ui_radius,
+        cfg.ui_shadow,
+        cfg.ui_animation,
+        cfg.ui_compact,
+      ].map(function (v) { return v == null ? '' : String(v); }).join('|');
+
+      if (state.lastUiThemeKey === themeKey) return;
+      state.lastUiThemeKey = themeKey;
+
+      function setVar(name, value) {
+        const v = String(value || '').trim();
+        if (!v) {
+          try { wrapper.style.removeProperty(name); } catch (_) {}
+          return;
+        }
+        try { wrapper.style.setProperty(name, v); } catch (_) {}
+      }
+
+      setVar('--pb-bg', cfg.ui_bg_color);
+      setVar('--pb-border', cfg.ui_border_color);
+      setVar('--pb-track', cfg.ui_track_color);
+      setVar('--pb-text', cfg.ui_text_color);
+
+      const height = Number(cfg.ui_bar_height || 0);
+      if (Number.isFinite(height) && height > 0) {
+        setVar('--pb-height', String(Math.max(6, Math.min(24, Math.round(height)))) + 'px');
+      } else {
+        try { wrapper.style.removeProperty('--pb-height'); } catch (_) {}
+      }
+
+      const radius = Number(cfg.ui_radius || 0);
+      if (Number.isFinite(radius) && radius >= 0) {
+        setVar('--pb-radius', String(Math.max(0, Math.min(40, Math.round(radius)))) + 'px');
+      } else {
+        try { wrapper.style.removeProperty('--pb-radius'); } catch (_) {}
+      }
+
+      wrapper.classList.toggle('pb-no-shadow', cfg.ui_shadow === false);
+      wrapper.classList.toggle('pb-no-anim', cfg.ui_animation === false);
+      wrapper.classList.toggle('pb-compact', cfg.ui_compact === true);
     }
 
     function toUiAmountResult(key, eligibleSubtotal, threshold, cfg, options) {
@@ -1159,6 +1229,22 @@
         return;
       }
 
+      if (state.configLoaded && state.config && !isBillingEntitled(state.config)) {
+        removeBar();
+        state.lastRenderedByKey = {};
+        state.lastRendered = null;
+        state.barHiddenUntilConfig = false;
+        if (state.evalTimer) {
+          try { clearTimeout(state.evalTimer); } catch (_) {}
+          state.evalTimer = null;
+        }
+        if (state.evalInFlight) {
+          try { state.evalInFlight.abort(); } catch (_) {}
+          state.evalInFlight = null;
+        }
+        return;
+      }
+
       const wrapper = ensureBarMounted();
       if (!wrapper) {
         dbg('render:no_wrapper', null);
@@ -1167,6 +1253,7 @@
       dbg('render:wrapper', { wrapper: elSummary(wrapper), container: elSummary(getCartContainer()) }, 'debug');
 
       // Always force visible when cart is not empty.
+      applyUiTheme(wrapper);
       state.barHiddenUntilConfig = false;
       setBarVisible(true, wrapper);
 

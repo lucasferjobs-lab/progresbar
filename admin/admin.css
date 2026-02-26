@@ -423,6 +423,17 @@ body {
   gap: 12px;
 }
 
+.pb-divider {
+  height: 1px;
+  background: var(--stroke2);
+  margin: 14px 0;
+}
+
+.pb-coupon {
+  display: grid;
+  gap: 10px;
+}
+
 .pb-linkbtn {
   display: inline-flex;
   align-items: center;
@@ -529,4 +540,3 @@ body {
     transform: none;
   }
 }
-
