@@ -48,6 +48,30 @@ function logBillingThrottled(event, key, details) {
   console.info(`[billing] ${event}`, details);
 }
 
+const EVAL_CACHE_TTL_MS = Number(process.env.EVAL_CACHE_TTL_MS || 5_000);
+const EVAL_CACHE_MAX = Number(process.env.EVAL_CACHE_MAX || 2000);
+const PRODUCT_CAT_CACHE_TTL_MS = Number(process.env.PRODUCT_CAT_CACHE_TTL_MS || 10 * 60 * 1000);
+const PRODUCT_CAT_CACHE_MAX = Number(process.env.PRODUCT_CAT_CACHE_MAX || 5000);
+
+function pruneMapToMax(map, maxEntries) {
+  const max = Math.max(0, Number(maxEntries || 0));
+  if (!max) return;
+  while (map.size > max) {
+    const firstKey = map.keys().next().value;
+    if (firstKey == null) break;
+    map.delete(firstKey);
+  }
+}
+
+function invalidateEvaluateCacheForStore(storeId) {
+  const sid = String(storeId || '').trim();
+  if (!sid) return;
+  const prefix = `${sid}:`;
+  for (const key of evaluateGoalsCache.keys()) {
+    if (String(key).startsWith(prefix)) evaluateGoalsCache.delete(key);
+  }
+}
+
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.warn('[WARN] Missing TIENDANUBE_CLIENT_ID or TIENDANUBE_CLIENT_SECRET in environment.');
 }
@@ -131,20 +155,20 @@ app.post('/webhooks/tiendanube', async (req, res) => {
     if (event === 'app/uninstalled') {
       // Delete store data. FKs cascade to settings/memberships.
       await pool.query('DELETE FROM tiendas WHERE store_id = $1', [storeId]);
-      evaluateGoalsCache.clear();
+      invalidateEvaluateCacheForStore(storeId);
       console.info('[billing] app_uninstalled', { store_id: storeId });
       return res.sendStatus(200);
     }
 
     if (event === 'app/suspended') {
       await setStoreBillingStatus(storeId, false, 'suspended');
-      evaluateGoalsCache.clear();
+      invalidateEvaluateCacheForStore(storeId);
       return res.sendStatus(200);
     }
 
     if (event === 'app/resumed') {
       await setStoreBillingStatus(storeId, true, 'resumed');
-      evaluateGoalsCache.clear();
+      invalidateEvaluateCacheForStore(storeId);
       return res.sendStatus(200);
     }
 
@@ -171,10 +195,17 @@ app.use('/static', express.static(path.join(__dirname), {
   lastModified: false,
   maxAge: 0,
   setHeaders: (res, filePath) => {
-    if (filePath.includes(`${path.sep}storefront${path.sep}`) || filePath.includes(`${path.sep}admin${path.sep}`)) {
+    if (filePath.includes(`${path.sep}admin${path.sep}`)) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
+      return;
+    }
+
+    if (filePath.includes(`${path.sep}storefront${path.sep}`)) {
+      // Storefront assets are requested with a version query (see barra.js),
+      // so it's safe to cache them aggressively to reduce cart-open latency.
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     }
   },
 }));
@@ -709,32 +740,41 @@ async function fetchProductCategories(storeId, accessToken, productId) {
   const cacheKey = `${storeId}:${productId}`;
   const now = Date.now();
   const cached = productCategoryCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) return cached.categories;
-
-  const url = `${apiStoreUrl(storeId, `products/${productId}`)}?fields=id,categories`;
-  const headers = {
-    Authentication: `bearer ${accessToken}`,
-    'User-Agent': APP_USER_AGENT,
-    'Content-Type': 'application/json',
-  };
-
-  let resp;
-  try {
-    resp = await axios.get(url, { headers, timeout: 8000 });
-  } catch (error) {
-    const status = error && error.response && error.response.status;
-    if (status === 402) {
-      await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
-    }
-    throw error;
+  if (cached && cached.expiresAt > now) {
+    if (cached.categories) return cached.categories;
+    if (cached.promise) return cached.promise;
   }
-  const product = resp.data || {};
-  const categories = Array.isArray(product.categories)
-    ? product.categories.map((c) => String((c && c.id) || c)).filter(Boolean)
-    : [];
 
-  productCategoryCache.set(cacheKey, { categories, expiresAt: now + 5 * 60 * 1000 });
-  return categories;
+  const promise = (async () => {
+    const url = `${apiStoreUrl(storeId, `products/${productId}`)}?fields=id,categories`;
+    const headers = {
+      Authentication: `bearer ${accessToken}`,
+      'User-Agent': APP_USER_AGENT,
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const resp = await axios.get(url, { headers, timeout: 8000 });
+      const product = resp.data || {};
+      const categories = Array.isArray(product.categories)
+        ? product.categories.map((c) => String((c && c.id) || c)).filter(Boolean)
+        : [];
+      productCategoryCache.set(cacheKey, { categories, expiresAt: now + PRODUCT_CAT_CACHE_TTL_MS });
+      pruneMapToMax(productCategoryCache, PRODUCT_CAT_CACHE_MAX);
+      return categories;
+    } catch (error) {
+      const status = error && error.response && error.response.status;
+      if (status === 402) {
+        await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
+      }
+      productCategoryCache.delete(cacheKey);
+      throw error;
+    }
+  })();
+
+  productCategoryCache.set(cacheKey, { promise, expiresAt: now + PRODUCT_CAT_CACHE_TTL_MS });
+  pruneMapToMax(productCategoryCache, PRODUCT_CAT_CACHE_MAX);
+  return promise;
 }
 
 async function evaluateAdvancedGoals(storeId, payload) {
@@ -946,15 +986,44 @@ async function evaluateAdvancedGoals(storeId, payload) {
 
 function buildEvaluateCacheKey(storeId, payload) {
   const norm = normalizeCartPayload(payload);
-  const signature = JSON.stringify({
-    total: norm.total_amount,
-    items: norm.items.map((i) => [i.product_id, i.quantity, i.line_total]),
+  const items = norm.items.map((i) => {
+    return [String(i.product_id || ''), Math.max(1, Number(i.quantity || 1)), toNumberOrNull(i.line_total) || 0];
+  }).filter((p) => p[0]);
+  items.sort((a, b) => {
+    const byId = a[0].localeCompare(b[0]);
+    if (byId) return byId;
+    if (a[1] !== b[1]) return a[1] - b[1];
+    return a[2] - b[2];
   });
-  return `${storeId}:${signature}`;
+  const parts = items.map((p) => `${p[0]}:${p[1]}:${p[2]}`).join('|');
+  return `${storeId}:t=${String(norm.total_amount || 0)};i=${parts}`;
 }
 
 async function evaluateAdvancedGoalsCached(storeId, payload) {
-  return evaluateAdvancedGoals(storeId, payload);
+  const key = buildEvaluateCacheKey(storeId, payload);
+  const now = Date.now();
+  const cached = evaluateGoalsCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    if (cached.value) return cached.value;
+    if (cached.promise) return cached.promise;
+  } else if (cached) {
+    evaluateGoalsCache.delete(key);
+  }
+
+  const promise = evaluateAdvancedGoals(storeId, payload)
+    .then((value) => {
+      evaluateGoalsCache.set(key, { value, expiresAt: now + EVAL_CACHE_TTL_MS });
+      pruneMapToMax(evaluateGoalsCache, EVAL_CACHE_MAX);
+      return value;
+    })
+    .catch((err) => {
+      evaluateGoalsCache.delete(key);
+      throw err;
+    });
+
+  evaluateGoalsCache.set(key, { promise, expiresAt: now + EVAL_CACHE_TTL_MS });
+  pruneMapToMax(evaluateGoalsCache, EVAL_CACHE_MAX);
+  return promise;
 }
 
 app.get('/instalacion', async (req, res) => {
@@ -1238,7 +1307,7 @@ app.post('/admin/save', async (req, res) => {
       ]
     );
 
-    evaluateGoalsCache.clear();
+    invalidateEvaluateCacheForStore(storeId);
     if (wantsJson) return res.status(200).json({ ok: true });
     return res.redirect(302, `/admin?store_id=${storeId}&saved=1`);
   } catch (error) {

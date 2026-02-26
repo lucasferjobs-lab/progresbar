@@ -423,6 +423,39 @@ body {
   gap: 12px;
 }
 
+.pb-billing {
+  border: 1px solid var(--stroke2);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.pb-billing__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--stroke2);
+}
+
+.pb-billing__row:last-child {
+  border-bottom: 0;
+}
+
+.pb-billing__k {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.pb-billing__v {
+  color: #0b1220;
+  font-size: 13px;
+  font-weight: 900;
+  text-align: right;
+}
+
 .pb-divider {
   height: 1px;
   background: var(--stroke2);

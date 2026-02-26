@@ -27,6 +27,7 @@
       <div class="pb-shell">
         <nav class="pb-nav" aria-label="Secciones">
           <button type="button" class="pb-nav__btn is-active" data-pb-nav="1" data-pb-view="settings">Configuración</button>
+          <button type="button" class="pb-nav__btn" data-pb-nav="1" data-pb-view="billing">Facturación</button>
           <button type="button" class="pb-nav__btn" data-pb-nav="1" data-pb-view="contact">Contacto</button>
           <button type="button" class="pb-nav__btn" data-pb-nav="1" data-pb-view="faq">Preguntas frecuentes</button>
         </nav>
@@ -313,6 +314,42 @@
             </div>
           </section>
 
+          <section class="pb-view" data-pb-view-panel="billing">
+            <div class="pb-card">
+              <div class="pb-card__head">
+                <div>
+                  <h1>Facturación</h1>
+                  <p class="pb-muted">La facturación se gestiona desde Tiendanube.</p>
+                </div>
+              </div>
+
+              <div class="pb-billing">
+                <div class="pb-billing__row">
+                  <div class="pb-billing__k">Estado</div>
+                  <div class="pb-billing__v" id="billingStatus">...</div>
+                </div>
+                <div class="pb-billing__row hidden" id="billingUntilWrap">
+                  <div class="pb-billing__k">Gratis hasta</div>
+                  <div class="pb-billing__v" id="billingUntil">...</div>
+                </div>
+                <div class="pb-billing__row hidden" id="billingCodeWrap">
+                  <div class="pb-billing__k">Cupón</div>
+                  <div class="pb-billing__v"><code id="billingCode">...</code></div>
+                </div>
+              </div>
+
+              <div class="pb-divider"></div>
+
+              <div class="pb-coupon">
+                <div class="pb-field">
+                  <label for="couponCode">Cupón</label>
+                  <input id="couponCode" type="text" autocomplete="off" />
+                </div>
+                <button type="button" class="pb-primary" id="couponRedeemBtn">Aplicar cupón</button>
+              </div>
+            </div>
+          </section>
+
           <section class="pb-view" data-pb-view-panel="contact">
             <div class="pb-card">
               <div class="pb-card__head">
@@ -325,16 +362,6 @@
               <div class="pb-contact">
                 <a id="supportEmailBtn" class="pb-linkbtn" href="#">Enviar email</a>
                 <button type="button" class="pb-linkbtn" data-pb-jump="faq">Ver FAQ</button>
-              </div>
-
-              <div class="pb-divider"></div>
-
-              <div class="pb-coupon">
-                <div class="pb-field">
-                  <label for="couponCode">Cupón</label>
-                  <input id="couponCode" type="text" autocomplete="off" />
-                </div>
-                <button type="button" class="pb-primary" id="couponRedeemBtn">Aplicar cupón</button>
               </div>
 
               <p class="pb-muted" style="margin-top: 12px;"><strong>FRANFER Soluciones</strong></p>

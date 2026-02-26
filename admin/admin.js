@@ -71,6 +71,44 @@
     if (locked && message) setNexoError(message);
   }
 
+  function updateBillingPanel(config) {
+    const statusEl = $('billingStatus');
+    const untilWrap = $('billingUntilWrap');
+    const untilEl = $('billingUntil');
+    const codeWrap = $('billingCodeWrap');
+    const codeEl = $('billingCode');
+
+    if (!statusEl) return;
+
+    if (!config) {
+      statusEl.textContent = '...';
+      if (untilWrap) untilWrap.classList.add('hidden');
+      if (codeWrap) codeWrap.classList.add('hidden');
+      return;
+    }
+
+    const active = config.billing_active !== false;
+    const untilRaw = config.billing_override_until ? String(config.billing_override_until) : '';
+    const untilMs = untilRaw ? Date.parse(untilRaw) : NaN;
+    const overrideValid = Number.isFinite(untilMs) && untilMs > Date.now();
+
+    if (active) {
+      statusEl.textContent = 'Activa';
+    } else if (overrideValid) {
+      statusEl.textContent = 'Habilitada por cupón';
+    } else {
+      statusEl.textContent = 'Pago requerido';
+    }
+
+    const untilText = overrideValid ? new Date(untilMs).toLocaleString() : '';
+    if (untilEl) untilEl.textContent = untilText || '';
+    if (untilWrap) untilWrap.classList.toggle('hidden', !overrideValid);
+
+    const code = String(config.billing_override_code || '').trim();
+    if (codeEl) codeEl.textContent = code || '...';
+    if (codeWrap) codeWrap.classList.toggle('hidden', !(overrideValid && !!code));
+  }
+
   function initViews() {
     const buttons = Array.prototype.slice.call(doc.querySelectorAll('[data-pb-nav=\"1\"][data-pb-view]'));
     const panels = Array.prototype.slice.call(doc.querySelectorAll('[data-pb-view-panel]'));
@@ -254,6 +292,7 @@
       const cfgRes = await fetch('/api/config/' + encodeURIComponent(storeId), { cache: 'no-store' });
       if (cfgRes.ok) {
         const c = await cfgRes.json();
+        updateBillingPanel(c);
         billingLocked = (function () {
           if (!c || c.billing_active !== false) return false;
           const until = c.billing_override_until;
