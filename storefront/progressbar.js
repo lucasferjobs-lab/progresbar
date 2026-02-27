@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-05';
+  const APP_VERSION = '2026-02-27-06';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -748,9 +748,24 @@
 
     function parseProductIdFromCartItemNode(node) {
       if (!node || !node.getAttribute) return null;
-      const storeAttr = String(node.getAttribute('data-store') || '');
-      const m = storeAttr.match(/cart-item-(\d+)/);
-      return m ? String(m[1]) : null;
+      try {
+        const storeAttr = String(node.getAttribute('data-store') || '');
+        const m = storeAttr.match(/cart-item-(\d+)/);
+        if (m) return String(m[1]);
+      } catch (_) {}
+
+      // Fallback for themes where the cart item wrapper doesn't carry data-store,
+      // but a descendant does.
+      try {
+        if (!node.querySelector) return null;
+        const inner = node.querySelector('[data-store*="cart-item-"]');
+        if (!inner || !inner.getAttribute) return null;
+        const storeAttr = String(inner.getAttribute('data-store') || '');
+        const m = storeAttr.match(/cart-item-(\d+)/);
+        return m ? String(m[1]) : null;
+      } catch (_) {
+        return null;
+      }
     }
 
     function resolveProductIdFromDomLineItemId(lineItemId) {
