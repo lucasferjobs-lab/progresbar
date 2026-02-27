@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-10';
+  const APP_VERSION = '2026-02-27-11';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1934,10 +1934,14 @@
       // Don't thrash: wait for the in-flight request to finish, then run again.
       if (state.evalInFlight) return;
 
-      // Debounce to coalesce DOM mutation bursts (trailing edge).
+      // Debounce to coalesce DOM mutation bursts but avoid "infinite postpone":
+      // some themes trigger continuous mutations, and a trailing-edge debounce
+      // that resets the timer can prevent remote eval from ever running.
       if (state.evalTimer) {
-        try { clearTimeout(state.evalTimer); } catch (_) {}
+        clogOnce('remote:timer_keep', { evalKey });
+        return;
       }
+      clogOnce('remote:timer_set', { evalKey, in_ms: 220 });
       state.evalTimer = setTimeout(runRemoteEval, 220);
     }
 
@@ -1955,6 +1959,8 @@
       if (!snapshot || !evalKey) return;
       if (!detectStoreId()) return;
       if (!requiresRemoteEvaluation(state.config)) return;
+
+      clogOnce('remote:run', { evalKey });
 
       // Rebuild at execution time: Tiendanube can rebuild the cart DOM between
       // scheduling and execution, and we want the most stable snapshot.
@@ -1980,6 +1986,12 @@
       if (!isSnapshotStableForRemote(snapshot)) {
         const now = Date.now();
         state.remoteUnstableTries = (state.remoteUnstableTries || 0) + 1;
+        clogOnce('remote:unstable', {
+          evalKey,
+          tries: state.remoteUnstableTries,
+          total: snapshot ? snapshot.total_amount : null,
+          items: (snapshot && snapshot.items) ? snapshot.items.length : null,
+        });
         if (now < (state.remoteUnstableUntil || 0) && state.remoteUnstableTries <= 12) {
           state.pendingEvalSnapshot = snapshot;
           state.pendingEvalKey = evalKey;
