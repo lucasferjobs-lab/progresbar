@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-03';
+  const APP_VERSION = '2026-02-27-04';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1919,6 +1919,7 @@
 
       const methods = [
         'addToCart',
+        'addToCartEnhanced',
         'addItem',
         'addProduct',
         'removeItem',
