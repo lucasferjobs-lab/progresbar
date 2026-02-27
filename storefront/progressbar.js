@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-07';
+  const APP_VERSION = '2026-02-27-08';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -383,6 +383,9 @@
       emptySince: 0,
       lastPulseAt: 0,
       lastPulseReason: '',
+      remoteSuccessAt: 0,
+      warmAt: 0,
+      lastRemotePollAt: 0,
     };
 
     const debugEnabled = (function () {
@@ -483,6 +486,29 @@
       return null;
     }
 
+    function warmBackendOnce() {
+      if (!baseUrl) return;
+      const sid = detectStoreId();
+      if (!sid) return;
+      const now = Date.now();
+      if (state.warmAt && now - state.warmAt < 10 * 60 * 1000) return;
+
+      // Keep this strictly bounded: at most once per 10 minutes per tab.
+      try {
+        const key = `tn_progressbar_warm_${sid}`;
+        const last = Number((win.sessionStorage && win.sessionStorage.getItem(key)) || 0);
+        if (last && now - last < 10 * 60 * 1000) {
+          state.warmAt = last;
+          return;
+        }
+        if (win.sessionStorage) win.sessionStorage.setItem(key, String(now));
+      } catch (_) {}
+
+      state.warmAt = now;
+      // no-cors: we don't need the response body, only to wake the backend.
+      fetch(`${baseUrl}/health`, { mode: 'no-cors', cache: 'no-store' }).catch(function () {});
+    }
+
     function getCacheKey() {
       return `tn_progressbar_cfg_${detectStoreId() || 'unknown'}`;
     }
@@ -504,6 +530,7 @@
           state.configCachedAt = 0;
         }
         dbg('config:cache_hit', { bytes: String(cached || '').length, age_ms: state.configCachedAt ? (Date.now() - state.configCachedAt) : null }, 'info');
+        if (requiresRemoteEvaluation(state.config)) warmBackendOnce();
       }
     } catch (_) {}
 
@@ -720,6 +747,16 @@
         if (changed || !list) {
           scheduleRender();
           scheduleRemoteEval();
+        } else if (requiresRemoteEvaluation(state.config)) {
+          // If a remote-evaluated goal (category/regalo) is enabled, keep trying
+          // while the cart is open so the UI doesn't "wait forever" after a
+          // cold start or a transient network error.
+          const now = Date.now();
+          if (!state.lastRemotePollAt || now - state.lastRemotePollAt > 1500) {
+            state.lastRemotePollAt = now;
+            warmBackendOnce();
+            scheduleRemoteEval();
+          }
         }
       }, 260);
     }
@@ -1645,6 +1682,8 @@
         return;
       }
 
+      warmBackendOnce();
+
       const snapshot = buildSnapshot();
       const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
       if (!items.length) return;
@@ -1735,7 +1774,11 @@
         state.lastEvalKey = evalKey;
 
         const startedAt = Date.now();
-        const abortTimer = setTimeout(function () { controller.abort(); }, 3500);
+        const hadRecentSuccess = state.remoteSuccessAt && (Date.now() - state.remoteSuccessAt < 5 * 60 * 1000);
+        // Cold starts can take longer; allow a longer first fetch to avoid
+        // "envio category" appearing minutes later.
+        const timeoutMs = hadRecentSuccess ? 3500 : 12000;
+        const abortTimer = setTimeout(function () { controller.abort(); }, timeoutMs);
         const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
           method: 'POST',
           // Avoid CORS preflight: application/json triggers OPTIONS.
@@ -1755,6 +1798,7 @@
         state.lastRemote = data;
         state.lastRemoteKey = evalKey;
         state.lastRemoteAt = Date.now();
+        state.remoteSuccessAt = Date.now();
         renderNow();
       } catch (_) {
         // ignore
@@ -1791,6 +1835,7 @@
         state.configCachedAt = Date.now();
         // Config changes can affect remote evaluation even if the cart didn't change.
         state.lastRemoteKey = null;
+        if (requiresRemoteEvaluation(state.config)) warmBackendOnce();
         try {
           if (win.localStorage && data) {
             win.localStorage.setItem(getCacheKey(), JSON.stringify({ _pb_cache: 1, t: Date.now(), data }));
