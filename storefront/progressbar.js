@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-04';
+  const APP_VERSION = '2026-02-27-05';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -753,16 +753,38 @@
       return m ? String(m[1]) : null;
     }
 
+    function resolveProductIdFromDomLineItemId(lineItemId) {
+      const lid = String(lineItemId || '').trim();
+      if (!lid) return null;
+      try {
+        const node = doc.querySelector ? doc.querySelector('.js-cart-item[data-item-id="' + lid.replace(/"/g, '\\"') + '"]') : null;
+        if (!node) return null;
+        return parseProductIdFromCartItemNode(node);
+      } catch (_) {
+        return null;
+      }
+    }
+
     function buildDomItemsSnapshot() {
       const container = getCartContainer();
-      const root = container && container.querySelector ? container : doc;
-      const nodes = root.querySelectorAll ? root.querySelectorAll('.js-cart-item[data-item-id]') : [];
+      const root = container && container.querySelector ? container : null;
+      let nodes = root && root.querySelectorAll ? root.querySelectorAll('.js-cart-item[data-item-id]') : [];
+      if ((!nodes || !nodes.length) && doc.querySelectorAll) {
+        // Fallback: some themes update a hidden cart first. Use the document snapshot
+        // only when the active container has no items.
+        nodes = doc.querySelectorAll('.js-cart-item[data-item-id]');
+      }
       if (!nodes || !nodes.length) return [];
       const items = [];
+      const seen = {};
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
         if (!n) continue;
         const lineId = String(n.getAttribute('data-item-id') || '').trim();
+        if (lineId) {
+          if (seen[lineId]) continue;
+          seen[lineId] = true;
+        }
         const productId = parseProductIdFromCartItemNode(n);
         const qtyNode = n.querySelector ? n.querySelector('.js-cart-quantity-input,[data-component="quantity.value"]') : null;
         const qtyRaw = qtyNode ? (qtyNode.value || qtyNode.getAttribute('value')) : null;
@@ -1552,7 +1574,13 @@
       const items = list.map(function (item) {
         const lineId = String(item.id || item.item_id || item.cart_item_id || item.line_item_id || item.product_id || '').trim();
         const pidFromProductObj = (item && item.product && (item.product.id || item.product.product_id)) ? String(item.product.id || item.product.product_id).trim() : '';
-        const pid = pidFromProductObj || String(item.product_id || '').trim() || String(item.productId || '').trim() || lineId;
+        let pid = pidFromProductObj || String(item.product_id || '').trim() || String(item.productId || '').trim();
+        if (!pid && lineId) {
+          // Some themes store only the cart line-item id in LS.cart; map it back to
+          // product_id using the DOM when possible so product-scoped rules work instantly.
+          pid = resolveProductIdFromDomLineItemId(lineId) || '';
+        }
+        if (!pid) pid = lineId;
         const qty = Math.max(1, Number(item.quantity || 1));
         const unit = toAmount(item.unit_price || item.price || item.unitPrice || item.base_price);
         const lineRaw = item.line_total || item.subtotal || item.total || item.line_price;
