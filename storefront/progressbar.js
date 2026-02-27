@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-08';
+  const APP_VERSION = '2026-02-26-12';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -101,65 +101,6 @@
       parts.push(String(Number(it.line_total || 0).toFixed(2)));
     }
     return parts.join('|');
-  }
-
-  // A more stable signature for remote evaluation dedupe. We intentionally ignore
-  // per-line totals because themes can temporarily render incomplete DOM values
-  // during AJAX updates, which would otherwise cause request storms.
-  function buildRemoteKey(snapshot) {
-    const total = Number(snapshot && snapshot.total_amount) || 0;
-    const items = Array.isArray(snapshot && snapshot.items) ? snapshot.items : [];
-
-    const normalized = items.map(function (it) {
-      const pid = String((it && it.product_id) || '').trim();
-      if (!pid) return null;
-      const qty = Math.max(1, Number((it && it.quantity) || 1));
-      return {
-        product_id: pid,
-        quantity: Number.isFinite(qty) ? qty : 1,
-      };
-    }).filter(function (x) { return !!x; });
-
-    normalized.sort(function (a, b) {
-      const byId = a.product_id.localeCompare(b.product_id);
-      if (byId) return byId;
-      return a.quantity - b.quantity;
-    });
-
-    const parts = [String(total.toFixed(2)), String(normalized.length)];
-    for (let i = 0; i < normalized.length; i++) {
-      const it = normalized[i];
-      parts.push(it.product_id);
-      parts.push(String(it.quantity || 0));
-    }
-    return parts.join('|');
-  }
-
-  function isSnapshotStableForRemote(snapshot) {
-    if (!snapshot) return false;
-    const total = Number(snapshot.total_amount) || 0;
-    if (!Number.isFinite(total) || total <= 0) return false;
-    const items = Array.isArray(snapshot.items) ? snapshot.items : [];
-    if (!items.length) return false;
-
-    let sum = 0;
-    let anyNonZero = false;
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i] || {};
-      const line = Math.max(0, Number(it.line_total || 0));
-      if (Number.isFinite(line)) {
-        sum += line;
-        if (line > 0) anyNonZero = true;
-      }
-    }
-
-    // If we can't read any line totals yet, defer.
-    if (!anyNonZero) return false;
-
-    const delta = Math.abs(sum - total);
-    // Allow small mismatch due to rounding/discount display quirks, but not large gaps.
-    const tol = Math.max(0.5, total * 0.03);
-    return delta <= tol;
   }
 
   function decideEmpty(input) {
@@ -334,7 +275,6 @@
     const baseUrl = srcUrl ? srcUrl.origin : win.location.origin;
     let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
     const bootAt = Date.now();
-    const CONFIG_FRESH_MS = 25_000;
 
     // Intentionally no console logs in production.
 
@@ -343,7 +283,6 @@
       configLoaded: false,
       freshConfig: false,
       lastConfigFetchAt: 0,
-      configCachedAt: 0,
       lastRemote: null,
       lastRemoteKey: null,
       lastRemoteAt: 0,
@@ -354,8 +293,6 @@
       evalInFlight: null,
       lastEvalKey: null,
       lastEvalAt: 0,
-      remoteUnstableTries: 0,
-      remoteUnstableUntil: 0,
       pendingEvalSnapshot: null,
       pendingEvalKey: null,
       raf: null,
@@ -380,12 +317,6 @@
       lastSubtotalRaw: null,
       burstInterval: null,
       burstUntil: 0,
-      emptySince: 0,
-      lastPulseAt: 0,
-      lastPulseReason: '',
-      remoteSuccessAt: 0,
-      warmAt: 0,
-      lastRemotePollAt: 0,
     };
 
     const debugEnabled = (function () {
@@ -486,29 +417,6 @@
       return null;
     }
 
-    function warmBackendOnce() {
-      if (!baseUrl) return;
-      const sid = detectStoreId();
-      if (!sid) return;
-      const now = Date.now();
-      if (state.warmAt && now - state.warmAt < 10 * 60 * 1000) return;
-
-      // Keep this strictly bounded: at most once per 10 minutes per tab.
-      try {
-        const key = `tn_progressbar_warm_${sid}`;
-        const last = Number((win.sessionStorage && win.sessionStorage.getItem(key)) || 0);
-        if (last && now - last < 10 * 60 * 1000) {
-          state.warmAt = last;
-          return;
-        }
-        if (win.sessionStorage) win.sessionStorage.setItem(key, String(now));
-      } catch (_) {}
-
-      state.warmAt = now;
-      // no-cors: we don't need the response body, only to wake the backend.
-      fetch(`${baseUrl}/health`, { mode: 'no-cors', cache: 'no-store' }).catch(function () {});
-    }
-
     function getCacheKey() {
       return `tn_progressbar_cfg_${detectStoreId() || 'unknown'}`;
     }
@@ -516,21 +424,11 @@
     try {
       const cached = win.localStorage ? win.localStorage.getItem(getCacheKey()) : null;
       if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed && parsed._pb_cache === 1 && parsed.data) {
-          state.config = parsed.data;
-          state.configLoaded = true;
-          state.freshConfig = true;
-          state.configCachedAt = Number(parsed.t || 0) || 0;
-        } else if (parsed && typeof parsed === 'object') {
-          // Legacy format (no timestamp)
-          state.config = parsed;
-          state.configLoaded = true;
-          state.freshConfig = true;
-          state.configCachedAt = 0;
-        }
-        dbg('config:cache_hit', { bytes: String(cached || '').length, age_ms: state.configCachedAt ? (Date.now() - state.configCachedAt) : null }, 'info');
-        if (requiresRemoteEvaluation(state.config)) warmBackendOnce();
+        state.config = JSON.parse(cached);
+        state.configLoaded = true;
+        // Cached config is safe to render (it's already customized); refresh in background.
+        state.freshConfig = true;
+        dbg('config:cache_hit', { bytes: String(cached || '').length }, 'info');
       }
     } catch (_) {}
 
@@ -701,19 +599,6 @@
       return isVisible(root);
     }
 
-    // Some themes toggle the cart in ways that our "open" detector can miss
-    // momentarily. For remote-evaluated rules (category/regalo) we still want
-    // to precompute as soon as there's evidence of a non-empty cart.
-    function isCartOpenish() {
-      if (isCartOpen()) return true;
-      if (hasCartItems()) return true;
-      const subtotal = getSubtotalAmount();
-      if (subtotal != null && subtotal > 0) return true;
-      const lsCount = getLsItemCount();
-      if (lsCount != null && lsCount > 0) return true;
-      return false;
-    }
-
     function maybeStartCartOpenPoll() {
       if (!isCartOpen()) {
         if (state.openPoller) {
@@ -747,16 +632,6 @@
         if (changed || !list) {
           scheduleRender();
           scheduleRemoteEval();
-        } else if (requiresRemoteEvaluation(state.config)) {
-          // If a remote-evaluated goal (category/regalo) is enabled, keep trying
-          // while the cart is open so the UI doesn't "wait forever" after a
-          // cold start or a transient network error.
-          const now = Date.now();
-          if (!state.lastRemotePollAt || now - state.lastRemotePollAt > 1500) {
-            state.lastRemotePollAt = now;
-            warmBackendOnce();
-            scheduleRemoteEval();
-          }
         }
       }, 260);
     }
@@ -798,58 +673,21 @@
 
     function parseProductIdFromCartItemNode(node) {
       if (!node || !node.getAttribute) return null;
-      try {
-        const storeAttr = String(node.getAttribute('data-store') || '');
-        const m = storeAttr.match(/cart-item-(\d+)/);
-        if (m) return String(m[1]);
-      } catch (_) {}
-
-      // Fallback for themes where the cart item wrapper doesn't carry data-store,
-      // but a descendant does.
-      try {
-        if (!node.querySelector) return null;
-        const inner = node.querySelector('[data-store*="cart-item-"]');
-        if (!inner || !inner.getAttribute) return null;
-        const storeAttr = String(inner.getAttribute('data-store') || '');
-        const m = storeAttr.match(/cart-item-(\d+)/);
-        return m ? String(m[1]) : null;
-      } catch (_) {
-        return null;
-      }
-    }
-
-    function resolveProductIdFromDomLineItemId(lineItemId) {
-      const lid = String(lineItemId || '').trim();
-      if (!lid) return null;
-      try {
-        const node = doc.querySelector ? doc.querySelector('.js-cart-item[data-item-id="' + lid.replace(/"/g, '\\"') + '"]') : null;
-        if (!node) return null;
-        return parseProductIdFromCartItemNode(node);
-      } catch (_) {
-        return null;
-      }
+      const storeAttr = String(node.getAttribute('data-store') || '');
+      const m = storeAttr.match(/cart-item-(\d+)/);
+      return m ? String(m[1]) : null;
     }
 
     function buildDomItemsSnapshot() {
       const container = getCartContainer();
-      const root = container && container.querySelector ? container : null;
-      let nodes = root && root.querySelectorAll ? root.querySelectorAll('.js-cart-item[data-item-id]') : [];
-      if ((!nodes || !nodes.length) && doc.querySelectorAll) {
-        // Fallback: some themes update a hidden cart first. Use the document snapshot
-        // only when the active container has no items.
-        nodes = doc.querySelectorAll('.js-cart-item[data-item-id]');
-      }
+      const root = container && container.querySelector ? container : doc;
+      const nodes = root.querySelectorAll ? root.querySelectorAll('.js-cart-item[data-item-id]') : [];
       if (!nodes || !nodes.length) return [];
       const items = [];
-      const seen = {};
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
         if (!n) continue;
         const lineId = String(n.getAttribute('data-item-id') || '').trim();
-        if (lineId) {
-          if (seen[lineId]) continue;
-          seen[lineId] = true;
-        }
         const productId = parseProductIdFromCartItemNode(n);
         const qtyNode = n.querySelector ? n.querySelector('.js-cart-quantity-input,[data-component="quantity.value"]') : null;
         const qtyRaw = qtyNode ? (qtyNode.value || qtyNode.getAttribute('value')) : null;
@@ -942,6 +780,12 @@
         return null;
       }
 
+      // If the cart is empty, don't mount (or keep) an empty white box.
+      if (isCartEmpty()) {
+        removeBar();
+        return null;
+      }
+
       // If the store is not active in billing, the app must not run.
       if (state.configLoaded && state.config && !isBillingEntitled(state.config)) {
         removeBar();
@@ -958,11 +802,6 @@
         dbg('mount:reuse', { container: elSummary(container) }, 'debug');
         return existing;
       }
-
-      // If the cart is empty, don't mount (avoids an empty white box). Removal is
-      // handled by renderNow() so transient empty states during rerenders don't
-      // immediately tear down the UI.
-      if (isCartEmpty()) return null;
 
       // Cleanup any stray bars outside the active container (avoid duplicate IDs).
       try {
@@ -1447,34 +1286,10 @@
     function renderNow() {
       dbg('render:call', { open: isCartOpen() }, 'debug');
       if (isCartEmpty()) {
-        const now = Date.now();
-        const prev = state.lastRenderedByKey || {};
-        const fallback = Object.keys(prev).map(function (k) { return prev[k]; }).filter(Boolean);
-
-        const container = getCartContainer();
-        const wrapper = (container && container.querySelector) ? container.querySelector('#app-barra-progreso') : null;
-
-        // Tiendanube themes can briefly show the "empty cart" view while they
-        // rerender quantities/totals. Avoid tearing down the bar in that window.
-        if (wrapper && fallback.length) {
-          if (!state.emptySince) state.emptySince = now;
-
-          const reason = String(state.lastPulseReason || '');
-          const removeIntent = reason.indexOf('removeItem') !== -1 || reason.indexOf('removeProduct') !== -1;
-          const graceMs = removeIntent ? 350 : 6500;
-
-          if (now - state.emptySince < graceMs) {
-            applyUiTheme(wrapper);
-            setBarVisible(true, wrapper);
-            renderUiResults(wrapper, fallback);
-            return;
-          }
-        }
-
         // Empty cart: remove the UI completely (no white box).
         removeBar();
         dbg('render:empty', {
-          keepMsLeft: Math.max(0, (state.keepVisibleUntil || 0) - now),
+          keepMsLeft: Math.max(0, (state.keepVisibleUntil || 0) - Date.now()),
           lsCount: getLsItemCount(),
           hasItems: hasCartItems(),
           subtotal: getSubtotalAmount(),
@@ -1483,7 +1298,6 @@
             return !!(emptyState && isVisible(emptyState));
           })(),
         }, 'info');
-        state.emptySince = 0;
         state.lastRenderedByKey = {};
         state.lastRendered = null;
         state.barHiddenUntilConfig = false;
@@ -1497,8 +1311,6 @@
         }
         return;
       }
-
-      state.emptySince = 0;
 
       if (state.configLoaded && state.config && !isBillingEntitled(state.config)) {
         removeBar();
@@ -1639,13 +1451,7 @@
       const items = list.map(function (item) {
         const lineId = String(item.id || item.item_id || item.cart_item_id || item.line_item_id || item.product_id || '').trim();
         const pidFromProductObj = (item && item.product && (item.product.id || item.product.product_id)) ? String(item.product.id || item.product.product_id).trim() : '';
-        let pid = pidFromProductObj || String(item.product_id || '').trim() || String(item.productId || '').trim();
-        if (!pid && lineId) {
-          // Some themes store only the cart line-item id in LS.cart; map it back to
-          // product_id using the DOM when possible so product-scoped rules work instantly.
-          pid = resolveProductIdFromDomLineItemId(lineId) || '';
-        }
-        if (!pid) pid = lineId;
+        const pid = pidFromProductObj || String(item.product_id || '').trim() || String(item.productId || '').trim() || lineId;
         const qty = Math.max(1, Number(item.quantity || 1));
         const unit = toAmount(item.unit_price || item.price || item.unitPrice || item.base_price);
         const lineRaw = item.line_total || item.subtotal || item.total || item.line_price;
@@ -1669,20 +1475,18 @@
     }
 
     function buildEvalKey(snapshot) {
-      return buildRemoteKey(snapshot);
+      return buildEvalKeyStable(snapshot);
     }
 
     function scheduleRemoteEval() {
       if (!detectStoreId()) return;
+      if (!isCartOpen()) return;
       if (isCartEmpty()) return;
-      if (!isCartOpenish()) return;
       if (!requiresRemoteEvaluation(state.config)) {
         state.lastRemote = null;
         state.lastRemoteKey = null;
         return;
       }
-
-      warmBackendOnce();
 
       const snapshot = buildSnapshot();
       const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
@@ -1690,10 +1494,10 @@
       const evalKey = buildEvalKey(snapshot);
       const now = Date.now();
 
-      // If we already have a remote result for this exact signature, don't refetch.
-      // Any needed refresh is driven by config changes (which clear lastRemoteKey)
-      // or by cart signature changes.
-      if (state.lastRemote && state.lastRemoteKey === evalKey) return;
+      // If we already have a fresh remote result for this exact signature,
+      // don't refetch. Themes can cause lots of DOM churn while the cart is stable.
+      const REMOTE_FRESH_MS = 15_000;
+      if (state.lastRemote && state.lastRemoteKey === evalKey && now - (state.lastRemoteAt || 0) < REMOTE_FRESH_MS) return;
 
       // Backoff on repeated failures for the same signature.
       const REMOTE_ERROR_BACKOFF_MS = 5_000;
@@ -1704,10 +1508,6 @@
 
       state.pendingEvalSnapshot = snapshot;
       state.pendingEvalKey = evalKey;
-      if (now > (state.remoteUnstableUntil || 0)) {
-        state.remoteUnstableTries = 0;
-        state.remoteUnstableUntil = now + 2500;
-      }
       dbg('eval:schedule', { total: snapshot.total_amount, items: (snapshot.items || []).length, evalKey }, 'debug');
 
       // Don't thrash: wait for the in-flight request to finish, then run again.
@@ -1726,59 +1526,25 @@
         state.evalTimer = null;
       }
 
-      let snapshot = state.pendingEvalSnapshot;
-      let evalKey = state.pendingEvalKey;
+      const snapshot = state.pendingEvalSnapshot;
+      const evalKey = state.pendingEvalKey;
       state.pendingEvalSnapshot = null;
       state.pendingEvalKey = null;
 
       if (!snapshot || !evalKey) return;
       if (!detectStoreId()) return;
+      if (!isCartOpen()) return;
       if (isCartEmpty()) return;
-      if (!isCartOpenish()) return;
       if (!requiresRemoteEvaluation(state.config)) return;
-
-      // Rebuild at execution time: Tiendanube can rebuild the cart DOM between
-      // scheduling and execution, and we want the most stable snapshot.
-      try {
-        const fresh = buildSnapshot();
-        const freshItems = fresh && Array.isArray(fresh.items) ? fresh.items : [];
-        if (fresh && freshItems.length) {
-          const freshKey = buildEvalKey(fresh);
-          if (freshKey) {
-            snapshot = fresh;
-            evalKey = freshKey;
-          }
-        }
-      } catch (_) {}
-
-      // If we already have a remote result for this signature, skip.
-      if (state.lastRemote && state.lastRemoteKey === evalKey) return;
-
-      // Avoid sending incomplete payloads while the theme is mid-rerender.
-      if (!isSnapshotStableForRemote(snapshot)) {
-        const now = Date.now();
-        state.remoteUnstableTries = (state.remoteUnstableTries || 0) + 1;
-        if (now < (state.remoteUnstableUntil || 0) && state.remoteUnstableTries <= 12) {
-          state.pendingEvalSnapshot = snapshot;
-          state.pendingEvalKey = evalKey;
-          if (!state.evalTimer) state.evalTimer = setTimeout(runRemoteEval, 220);
-        }
-        return;
-      }
 
       try {
         const controller = new AbortController();
         state.evalInFlight = controller;
-        state.remoteUnstableTries = 0;
         state.lastEvalAt = Date.now();
         state.lastEvalKey = evalKey;
 
         const startedAt = Date.now();
-        const hadRecentSuccess = state.remoteSuccessAt && (Date.now() - state.remoteSuccessAt < 5 * 60 * 1000);
-        // Cold starts can take longer; allow a longer first fetch to avoid
-        // "envio category" appearing minutes later.
-        const timeoutMs = hadRecentSuccess ? 3500 : 12000;
-        const abortTimer = setTimeout(function () { controller.abort(); }, timeoutMs);
+        const abortTimer = setTimeout(function () { controller.abort(); }, 1400);
         const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
           method: 'POST',
           // Avoid CORS preflight: application/json triggers OPTIONS.
@@ -1798,7 +1564,6 @@
         state.lastRemote = data;
         state.lastRemoteKey = evalKey;
         state.lastRemoteAt = Date.now();
-        state.remoteSuccessAt = Date.now();
         renderNow();
       } catch (_) {
         // ignore
@@ -1816,7 +1581,6 @@
       const now = Date.now();
       const minInterval = state.config ? 3000 : 400;
       if (state.configInFlight) return state.configInFlight;
-      if (!force && state.configLoaded && state.configCachedAt && now - state.configCachedAt < CONFIG_FRESH_MS) return;
       if (!force && now - state.lastConfigFetchAt < minInterval) return;
       if (force && now - state.lastConfigFetchAt < 250) return;
       state.lastConfigFetchAt = now;
@@ -1825,20 +1589,18 @@
         try {
         const startedAt = Date.now();
         dbg('config:fetch', { force: !!force }, 'debug');
-        const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}`);
+        const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' });
         dbg('config:resp', { ok: !!(res && res.ok), status: res ? res.status : null, ms: Date.now() - startedAt }, 'debug');
         if (!res.ok) return;
         const data = await res.json();
         state.config = data || null;
         state.configLoaded = !!data;
         state.freshConfig = !!data;
-        state.configCachedAt = Date.now();
         // Config changes can affect remote evaluation even if the cart didn't change.
         state.lastRemoteKey = null;
-        if (requiresRemoteEvaluation(state.config)) warmBackendOnce();
         try {
           if (win.localStorage && data) {
-            win.localStorage.setItem(getCacheKey(), JSON.stringify({ _pb_cache: 1, t: Date.now(), data }));
+            win.localStorage.setItem(getCacheKey(), JSON.stringify(data));
           }
         } catch (_) {}
         renderNow();
@@ -1879,26 +1641,6 @@
       if (state.cartObserver) state.cartObserver.disconnect();
       state.observedCartRoot = root;
       state.cartObserver = new MutationObserver(function (mutations) {
-        function looksCartRelevant(node) {
-          try {
-            if (!node || node.nodeType !== 1) return false;
-            if (node.id === 'modal-cart') return true;
-            if (node.classList && (node.classList.contains('js-cart-item') || node.classList.contains('js-ajax-cart-list') || node.classList.contains('js-empty-ajax-cart'))) return true;
-            if (node.getAttribute) {
-              const ds = node.getAttribute('data-store');
-              if (ds && String(ds).indexOf('cart-item-') !== -1) return true;
-              const comp = node.getAttribute('data-component');
-              if (comp && String(comp).indexOf('cart') !== -1) return true;
-            }
-            if (node.querySelector) {
-              if (node.querySelector('#modal-cart,.js-cart-item,.js-ajax-cart-total.js-cart-subtotal,.js-empty-ajax-cart,[data-store=\"cart-subtotal\"]')) return true;
-            }
-            return false;
-          } catch (_) {
-            return false;
-          }
-        }
-
         for (let i = 0; i < mutations.length; i++) {
           const m = mutations[i];
           const t = m && m.target;
@@ -1908,31 +1650,6 @@
             scheduleRender();
             scheduleRemoteEval();
             return;
-          }
-
-          // Some themes update the cart by replacing the entire list without touching
-          // subtotal attributes. React to cart-related childList changes so product-scoped
-          // rules (envio/cuotas) update immediately.
-          if (m && m.type === 'childList') {
-            const relevantTarget = looksCartRelevant(t);
-            let relevantNodes = false;
-            const added = m.addedNodes || [];
-            const removed = m.removedNodes || [];
-            for (let j = 0; j < (added ? added.length : 0); j++) {
-              if (looksCartRelevant(added[j])) { relevantNodes = true; break; }
-            }
-            if (!relevantNodes) {
-              for (let j = 0; j < (removed ? removed.length : 0); j++) {
-                if (looksCartRelevant(removed[j])) { relevantNodes = true; break; }
-              }
-            }
-
-            if (relevantTarget || relevantNodes) {
-              scheduleMaintenance();
-              scheduleRender();
-              scheduleRemoteEval();
-              return;
-            }
           }
         }
       });
@@ -1975,8 +1692,7 @@
           bindModalObserver();
           maybeStartCartOpenPoll();
           patchLsCartMethods();
-          const openish = isCartOpenish();
-          if (openish) startBurst(1400);
+          if (isCartOpen()) startBurst(1400);
           scheduleRender();
           scheduleRemoteEval();
         } catch (_) {}
@@ -2000,8 +1716,6 @@
       state.keepVisibleUntil = Date.now() + Math.max(0, keepMs);
       // Consider this an "activity" signal to avoid empty-flicker while the cart rerenders.
       state.lastEvidenceAt = Date.now();
-      state.lastPulseAt = Date.now();
-      state.lastPulseReason = reason;
       dbg('pulse', { reason, keepMs }, 'info');
       maybeStartCartOpenPoll();
       startBurst(Math.max(1500, keepMs));
@@ -2020,7 +1734,6 @@
 
       const methods = [
         'addToCart',
-        'addToCartEnhanced',
         'addItem',
         'addProduct',
         'removeItem',
@@ -2088,19 +1801,7 @@
     doc.addEventListener('click', function (event) {
       const target = event && event.target;
       if (!target) return;
-      const selector = '.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]';
-      let ctrl = null;
-      try { ctrl = target.closest ? target.closest(selector) : null; } catch (_) {}
-      if (!ctrl) {
-        // SVG <use> elements can behave inconsistently with closest() in some themes.
-        let n = target;
-        for (let i = 0; n && i < 12; i++) {
-          try {
-            if (n.matches && n.matches(selector)) { ctrl = n; break; }
-          } catch (_) {}
-          n = n.parentNode;
-        }
-      }
+      const ctrl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
       if (!ctrl) return;
       pulseRefresh({ reason: 'click:qty' });
     }, true);

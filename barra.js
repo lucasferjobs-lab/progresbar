@@ -2,10 +2,8 @@
   if (window.__TN_PROGRESSBAR_BOOTSTRAPPED__) return;
   window.__TN_PROGRESSBAR_BOOTSTRAPPED__ = true;
 
-  const BUILD_VERSION = '2026-02-27-08';
+  const BUILD_VERSION = '2026-02-26-12';
   window.__TN_PROGRESSBAR_VERSION__ = BUILD_VERSION;
-  const CONFIG_FRESH_MS = 25_000;
-  const WARM_INTERVAL_MS = 10 * 60 * 1000;
 
   const currentScript = document.currentScript;
   const scriptSrc = (currentScript && currentScript.src) || '';
@@ -52,39 +50,6 @@
     return null;
   }
 
-  function needsRemote(cfg) {
-    try {
-      if (!cfg) return false;
-      const envioEnabled = cfg.enable_envio_rule !== false;
-      const cuotasEnabled = cfg.enable_cuotas_rule !== false;
-      const regaloEnabled = cfg.enable_regalo_rule !== false;
-      const envioScope = String(cfg.envio_scope || 'all');
-      const cuotasScope = String(cfg.cuotas_scope || 'all');
-      if (envioEnabled && envioScope === 'category') return true;
-      if (cuotasEnabled && cuotasScope === 'category') return true;
-      if (regaloEnabled) return true;
-      return false;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function warmBackend() {
-    const storeId = resolveStoreId();
-    if (!storeId) return false;
-    const lockKey = `tn_progressbar_warm_${storeId}`;
-    try {
-      const now = Date.now();
-      const last = Number((window.sessionStorage && window.sessionStorage.getItem(lockKey)) || 0);
-      if (last && now - last < WARM_INTERVAL_MS) return true;
-      if (window.sessionStorage) window.sessionStorage.setItem(lockKey, String(now));
-    } catch (_) {}
-
-    // Use no-cors to avoid console noise if the endpoint doesn't send CORS headers.
-    fetch(`${baseUrl}/health`, { mode: 'no-cors', cache: 'no-store' }).catch(function () {});
-    return true;
-  }
-
   function prefetchConfig() {
     const storeId = resolveStoreId();
     if (!storeId) return false;
@@ -92,34 +57,19 @@
     const lockKey = `tn_progressbar_cfg_prefetch_${storeId}`;
 
     try {
-      const raw = window.localStorage ? window.localStorage.getItem(cacheKey) : null;
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        const t = parsed && parsed._pb_cache === 1 ? Number(parsed.t || 0) : 0;
-        if (t && Number.isFinite(t) && Date.now() - t < CONFIG_FRESH_MS) {
-          if (parsed && parsed.data && needsRemote(parsed.data)) warmBackend();
-          return true;
-        }
-      }
-    } catch (_) {}
-
-    try {
       const now = Date.now();
       const last = Number((window.sessionStorage && window.sessionStorage.getItem(lockKey)) || 0);
-      if (last && now - last < CONFIG_FRESH_MS) return true;
+      if (last && now - last < 5000) return true;
       if (window.sessionStorage) window.sessionStorage.setItem(lockKey, String(now));
     } catch (_) {}
 
-    fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}`)
+    fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' })
       .then((r) => (r && r.ok ? r.json() : null))
       .then((data) => {
         if (!data) return;
         try {
-          if (window.localStorage) {
-            window.localStorage.setItem(cacheKey, JSON.stringify({ _pb_cache: 1, t: Date.now(), data }));
-          }
+          if (window.localStorage) window.localStorage.setItem(cacheKey, JSON.stringify(data));
         } catch (_) {}
-        if (needsRemote(data)) warmBackend();
       })
       .catch(() => {
       });
