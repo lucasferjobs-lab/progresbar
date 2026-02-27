@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-09';
+  const APP_VERSION = '2026-02-27-10';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -421,7 +421,7 @@
       } catch (_) {}
       try {
         // eslint-disable-next-line no-console
-        console.log('[ProgressBar]', t, details || null);
+        console.log('[ProgressBar]', t, { dt_ms: Date.now() - bootAt }, details || null);
       } catch (_) {}
     }
 
@@ -533,6 +533,37 @@
 
     function getCacheKey() {
       return `tn_progressbar_cfg_${detectStoreId() || 'unknown'}`;
+    }
+
+    function getRemoteCacheKey() {
+      const sid = detectStoreId();
+      return sid ? `tn_progressbar_remote_${sid}` : '';
+    }
+
+    function loadRemoteCacheOnce() {
+      if (state._remoteCacheLoaded) return;
+      state._remoteCacheLoaded = true;
+      const key = getRemoteCacheKey();
+      if (!key) return;
+      try {
+        const raw = win.sessionStorage ? win.sessionStorage.getItem(key) : null;
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || !parsed.data || !parsed.evalKey) return;
+        state.lastRemote = parsed.data;
+        state.lastRemoteKey = String(parsed.evalKey || '');
+        state.lastRemoteAt = Number(parsed.t || 0) || 0;
+        clogOnce('remote:cache_hit', { age_ms: state.lastRemoteAt ? (Date.now() - state.lastRemoteAt) : null });
+      } catch (_) {}
+    }
+
+    function saveRemoteCache(evalKey, data) {
+      const key = getRemoteCacheKey();
+      if (!key) return;
+      try {
+        if (!win.sessionStorage) return;
+        win.sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), evalKey: String(evalKey || ''), data: data || null }));
+      } catch (_) {}
     }
 
     try {
@@ -1414,6 +1445,7 @@
     }
 
     function buildUiResults(total) {
+      loadRemoteCacheOnce();
       const cfg = state.config;
       const preferLocalOnly = Date.now() < state.forceLocalUntil;
 
@@ -1855,16 +1887,9 @@
     }
 
     function scheduleRemoteEval() {
+      loadRemoteCacheOnce();
       if (!detectStoreId()) {
         clogOnce('remote:skip', { reason: 'no_store_id' });
-        return;
-      }
-      if (isCartEmpty()) {
-        clogOnce('remote:skip', { reason: 'cart_empty' });
-        return;
-      }
-      if (!isCartOpenish()) {
-        clogOnce('remote:skip', { reason: 'cart_not_openish' });
         return;
       }
       if (!requiresRemoteEvaluation(state.config)) {
@@ -1878,7 +1903,10 @@
 
       const snapshot = buildSnapshot();
       const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
-      if (!items.length) return;
+      if (!items.length || !(Number(snapshot.total_amount) > 0)) {
+        clogOnce('remote:skip', { reason: 'no_items', items: items.length, total: snapshot ? snapshot.total_amount : null });
+        return;
+      }
       const evalKey = buildEvalKey(snapshot);
       const now = Date.now();
 
@@ -1926,8 +1954,6 @@
 
       if (!snapshot || !evalKey) return;
       if (!detectStoreId()) return;
-      if (isCartEmpty()) return;
-      if (!isCartOpenish()) return;
       if (!requiresRemoteEvaluation(state.config)) return;
 
       // Rebuild at execution time: Tiendanube can rebuild the cart DOM between
@@ -1946,6 +1972,9 @@
 
       // If we already have a remote result for this signature, skip.
       if (state.lastRemote && state.lastRemoteKey === evalKey) return;
+
+      const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : [];
+      if (!items.length || !(Number(snapshot.total_amount) > 0)) return;
 
       // Avoid sending incomplete payloads while the theme is mid-rerender.
       if (!isSnapshotStableForRemote(snapshot)) {
@@ -1995,6 +2024,7 @@
         state.lastRemoteKey = evalKey;
         state.lastRemoteAt = Date.now();
         state.remoteSuccessAt = Date.now();
+        saveRemoteCache(evalKey, data);
         renderNow();
       } catch (err) {
         clogOnce('remote:error', {
