@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-01';
+  const APP_VERSION = '2026-02-27-02';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -852,12 +852,6 @@
         return null;
       }
 
-      // If the cart is empty, don't mount (or keep) an empty white box.
-      if (isCartEmpty()) {
-        removeBar();
-        return null;
-      }
-
       // If the store is not active in billing, the app must not run.
       if (state.configLoaded && state.config && !isBillingEntitled(state.config)) {
         removeBar();
@@ -874,6 +868,11 @@
         dbg('mount:reuse', { container: elSummary(container) }, 'debug');
         return existing;
       }
+
+      // If the cart is empty, don't mount (avoids an empty white box). Removal is
+      // handled by renderNow() so transient empty states during rerenders don't
+      // immediately tear down the UI.
+      if (isCartEmpty()) return null;
 
       // Cleanup any stray bars outside the active container (avoid duplicate IDs).
       try {
@@ -1955,7 +1954,19 @@
     doc.addEventListener('click', function (event) {
       const target = event && event.target;
       if (!target) return;
-      const ctrl = target.closest ? target.closest('.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]') : null;
+      const selector = '.js-cart-quantity-btn,[data-component="quantity.plus"],[data-component="quantity.minus"]';
+      let ctrl = null;
+      try { ctrl = target.closest ? target.closest(selector) : null; } catch (_) {}
+      if (!ctrl) {
+        // SVG <use> elements can behave inconsistently with closest() in some themes.
+        let n = target;
+        for (let i = 0; n && i < 12; i++) {
+          try {
+            if (n.matches && n.matches(selector)) { ctrl = n; break; }
+          } catch (_) {}
+          n = n.parentNode;
+        }
+      }
       if (!ctrl) return;
       pulseRefresh({ reason: 'click:qty' });
     }, true);
