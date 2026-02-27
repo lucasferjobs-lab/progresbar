@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-02';
+  const APP_VERSION = '2026-02-27-03';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -380,6 +380,9 @@
       lastSubtotalRaw: null,
       burstInterval: null,
       burstUntil: 0,
+      emptySince: 0,
+      lastPulseAt: 0,
+      lastPulseReason: '',
     };
 
     const debugEnabled = (function () {
@@ -1357,10 +1360,34 @@
     function renderNow() {
       dbg('render:call', { open: isCartOpen() }, 'debug');
       if (isCartEmpty()) {
+        const now = Date.now();
+        const prev = state.lastRenderedByKey || {};
+        const fallback = Object.keys(prev).map(function (k) { return prev[k]; }).filter(Boolean);
+
+        const container = getCartContainer();
+        const wrapper = (container && container.querySelector) ? container.querySelector('#app-barra-progreso') : null;
+
+        // Tiendanube themes can briefly show the "empty cart" view while they
+        // rerender quantities/totals. Avoid tearing down the bar in that window.
+        if (wrapper && fallback.length) {
+          if (!state.emptySince) state.emptySince = now;
+
+          const reason = String(state.lastPulseReason || '');
+          const removeIntent = reason.indexOf('removeItem') !== -1 || reason.indexOf('removeProduct') !== -1;
+          const graceMs = removeIntent ? 350 : 6500;
+
+          if (now - state.emptySince < graceMs) {
+            applyUiTheme(wrapper);
+            setBarVisible(true, wrapper);
+            renderUiResults(wrapper, fallback);
+            return;
+          }
+        }
+
         // Empty cart: remove the UI completely (no white box).
         removeBar();
         dbg('render:empty', {
-          keepMsLeft: Math.max(0, (state.keepVisibleUntil || 0) - Date.now()),
+          keepMsLeft: Math.max(0, (state.keepVisibleUntil || 0) - now),
           lsCount: getLsItemCount(),
           hasItems: hasCartItems(),
           subtotal: getSubtotalAmount(),
@@ -1369,6 +1396,7 @@
             return !!(emptyState && isVisible(emptyState));
           })(),
         }, 'info');
+        state.emptySince = 0;
         state.lastRenderedByKey = {};
         state.lastRendered = null;
         state.barHiddenUntilConfig = false;
@@ -1382,6 +1410,8 @@
         }
         return;
       }
+
+      state.emptySince = 0;
 
       if (state.configLoaded && state.config && !isBillingEntitled(state.config)) {
         removeBar();
@@ -1869,6 +1899,8 @@
       state.keepVisibleUntil = Date.now() + Math.max(0, keepMs);
       // Consider this an "activity" signal to avoid empty-flicker while the cart rerenders.
       state.lastEvidenceAt = Date.now();
+      state.lastPulseAt = Date.now();
+      state.lastPulseReason = reason;
       dbg('pulse', { reason, keepMs }, 'info');
       maybeStartCartOpenPoll();
       startBurst(Math.max(1500, keepMs));
