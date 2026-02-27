@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-26-12';
+  const APP_VERSION = '2026-02-27-01';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -101,6 +101,65 @@
       parts.push(String(Number(it.line_total || 0).toFixed(2)));
     }
     return parts.join('|');
+  }
+
+  // A more stable signature for remote evaluation dedupe. We intentionally ignore
+  // per-line totals because themes can temporarily render incomplete DOM values
+  // during AJAX updates, which would otherwise cause request storms.
+  function buildRemoteKey(snapshot) {
+    const total = Number(snapshot && snapshot.total_amount) || 0;
+    const items = Array.isArray(snapshot && snapshot.items) ? snapshot.items : [];
+
+    const normalized = items.map(function (it) {
+      const pid = String((it && it.product_id) || '').trim();
+      if (!pid) return null;
+      const qty = Math.max(1, Number((it && it.quantity) || 1));
+      return {
+        product_id: pid,
+        quantity: Number.isFinite(qty) ? qty : 1,
+      };
+    }).filter(function (x) { return !!x; });
+
+    normalized.sort(function (a, b) {
+      const byId = a.product_id.localeCompare(b.product_id);
+      if (byId) return byId;
+      return a.quantity - b.quantity;
+    });
+
+    const parts = [String(total.toFixed(2)), String(normalized.length)];
+    for (let i = 0; i < normalized.length; i++) {
+      const it = normalized[i];
+      parts.push(it.product_id);
+      parts.push(String(it.quantity || 0));
+    }
+    return parts.join('|');
+  }
+
+  function isSnapshotStableForRemote(snapshot) {
+    if (!snapshot) return false;
+    const total = Number(snapshot.total_amount) || 0;
+    if (!Number.isFinite(total) || total <= 0) return false;
+    const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+    if (!items.length) return false;
+
+    let sum = 0;
+    let anyNonZero = false;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] || {};
+      const line = Math.max(0, Number(it.line_total || 0));
+      if (Number.isFinite(line)) {
+        sum += line;
+        if (line > 0) anyNonZero = true;
+      }
+    }
+
+    // If we can't read any line totals yet, defer.
+    if (!anyNonZero) return false;
+
+    const delta = Math.abs(sum - total);
+    // Allow small mismatch due to rounding/discount display quirks, but not large gaps.
+    const tol = Math.max(0.5, total * 0.03);
+    return delta <= tol;
   }
 
   function decideEmpty(input) {
@@ -275,6 +334,7 @@
     const baseUrl = srcUrl ? srcUrl.origin : win.location.origin;
     let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
     const bootAt = Date.now();
+    const CONFIG_FRESH_MS = 25_000;
 
     // Intentionally no console logs in production.
 
@@ -283,6 +343,7 @@
       configLoaded: false,
       freshConfig: false,
       lastConfigFetchAt: 0,
+      configCachedAt: 0,
       lastRemote: null,
       lastRemoteKey: null,
       lastRemoteAt: 0,
@@ -293,6 +354,8 @@
       evalInFlight: null,
       lastEvalKey: null,
       lastEvalAt: 0,
+      remoteUnstableTries: 0,
+      remoteUnstableUntil: 0,
       pendingEvalSnapshot: null,
       pendingEvalKey: null,
       raf: null,
@@ -424,11 +487,20 @@
     try {
       const cached = win.localStorage ? win.localStorage.getItem(getCacheKey()) : null;
       if (cached) {
-        state.config = JSON.parse(cached);
-        state.configLoaded = true;
-        // Cached config is safe to render (it's already customized); refresh in background.
-        state.freshConfig = true;
-        dbg('config:cache_hit', { bytes: String(cached || '').length }, 'info');
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed._pb_cache === 1 && parsed.data) {
+          state.config = parsed.data;
+          state.configLoaded = true;
+          state.freshConfig = true;
+          state.configCachedAt = Number(parsed.t || 0) || 0;
+        } else if (parsed && typeof parsed === 'object') {
+          // Legacy format (no timestamp)
+          state.config = parsed;
+          state.configLoaded = true;
+          state.freshConfig = true;
+          state.configCachedAt = 0;
+        }
+        dbg('config:cache_hit', { bytes: String(cached || '').length, age_ms: state.configCachedAt ? (Date.now() - state.configCachedAt) : null }, 'info');
       }
     } catch (_) {}
 
@@ -1475,7 +1547,7 @@
     }
 
     function buildEvalKey(snapshot) {
-      return buildEvalKeyStable(snapshot);
+      return buildRemoteKey(snapshot);
     }
 
     function scheduleRemoteEval() {
@@ -1494,10 +1566,10 @@
       const evalKey = buildEvalKey(snapshot);
       const now = Date.now();
 
-      // If we already have a fresh remote result for this exact signature,
-      // don't refetch. Themes can cause lots of DOM churn while the cart is stable.
-      const REMOTE_FRESH_MS = 15_000;
-      if (state.lastRemote && state.lastRemoteKey === evalKey && now - (state.lastRemoteAt || 0) < REMOTE_FRESH_MS) return;
+      // If we already have a remote result for this exact signature, don't refetch.
+      // Any needed refresh is driven by config changes (which clear lastRemoteKey)
+      // or by cart signature changes.
+      if (state.lastRemote && state.lastRemoteKey === evalKey) return;
 
       // Backoff on repeated failures for the same signature.
       const REMOTE_ERROR_BACKOFF_MS = 5_000;
@@ -1508,6 +1580,10 @@
 
       state.pendingEvalSnapshot = snapshot;
       state.pendingEvalKey = evalKey;
+      if (now > (state.remoteUnstableUntil || 0)) {
+        state.remoteUnstableTries = 0;
+        state.remoteUnstableUntil = now + 2500;
+      }
       dbg('eval:schedule', { total: snapshot.total_amount, items: (snapshot.items || []).length, evalKey }, 'debug');
 
       // Don't thrash: wait for the in-flight request to finish, then run again.
@@ -1526,8 +1602,8 @@
         state.evalTimer = null;
       }
 
-      const snapshot = state.pendingEvalSnapshot;
-      const evalKey = state.pendingEvalKey;
+      let snapshot = state.pendingEvalSnapshot;
+      let evalKey = state.pendingEvalKey;
       state.pendingEvalSnapshot = null;
       state.pendingEvalKey = null;
 
@@ -1537,14 +1613,44 @@
       if (isCartEmpty()) return;
       if (!requiresRemoteEvaluation(state.config)) return;
 
+      // Rebuild at execution time: Tiendanube can rebuild the cart DOM between
+      // scheduling and execution, and we want the most stable snapshot.
+      try {
+        const fresh = buildSnapshot();
+        const freshItems = fresh && Array.isArray(fresh.items) ? fresh.items : [];
+        if (fresh && freshItems.length) {
+          const freshKey = buildEvalKey(fresh);
+          if (freshKey) {
+            snapshot = fresh;
+            evalKey = freshKey;
+          }
+        }
+      } catch (_) {}
+
+      // If we already have a remote result for this signature, skip.
+      if (state.lastRemote && state.lastRemoteKey === evalKey) return;
+
+      // Avoid sending incomplete payloads while the theme is mid-rerender.
+      if (!isSnapshotStableForRemote(snapshot)) {
+        const now = Date.now();
+        state.remoteUnstableTries = (state.remoteUnstableTries || 0) + 1;
+        if (now < (state.remoteUnstableUntil || 0) && state.remoteUnstableTries <= 12) {
+          state.pendingEvalSnapshot = snapshot;
+          state.pendingEvalKey = evalKey;
+          if (!state.evalTimer) state.evalTimer = setTimeout(runRemoteEval, 220);
+        }
+        return;
+      }
+
       try {
         const controller = new AbortController();
         state.evalInFlight = controller;
+        state.remoteUnstableTries = 0;
         state.lastEvalAt = Date.now();
         state.lastEvalKey = evalKey;
 
         const startedAt = Date.now();
-        const abortTimer = setTimeout(function () { controller.abort(); }, 1400);
+        const abortTimer = setTimeout(function () { controller.abort(); }, 3500);
         const res = await fetch(`${baseUrl}/api/goals/${encodeURIComponent(storeId)}/evaluate`, {
           method: 'POST',
           // Avoid CORS preflight: application/json triggers OPTIONS.
@@ -1581,6 +1687,7 @@
       const now = Date.now();
       const minInterval = state.config ? 3000 : 400;
       if (state.configInFlight) return state.configInFlight;
+      if (!force && state.configLoaded && state.configCachedAt && now - state.configCachedAt < CONFIG_FRESH_MS) return;
       if (!force && now - state.lastConfigFetchAt < minInterval) return;
       if (force && now - state.lastConfigFetchAt < 250) return;
       state.lastConfigFetchAt = now;
@@ -1589,18 +1696,19 @@
         try {
         const startedAt = Date.now();
         dbg('config:fetch', { force: !!force }, 'debug');
-        const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}?_=${Date.now()}`, { cache: 'no-store' });
+        const res = await fetch(`${baseUrl}/api/config/${encodeURIComponent(storeId)}`);
         dbg('config:resp', { ok: !!(res && res.ok), status: res ? res.status : null, ms: Date.now() - startedAt }, 'debug');
         if (!res.ok) return;
         const data = await res.json();
         state.config = data || null;
         state.configLoaded = !!data;
         state.freshConfig = !!data;
+        state.configCachedAt = Date.now();
         // Config changes can affect remote evaluation even if the cart didn't change.
         state.lastRemoteKey = null;
         try {
           if (win.localStorage && data) {
-            win.localStorage.setItem(getCacheKey(), JSON.stringify(data));
+            win.localStorage.setItem(getCacheKey(), JSON.stringify({ _pb_cache: 1, t: Date.now(), data }));
           }
         } catch (_) {}
         renderNow();
@@ -1641,6 +1749,26 @@
       if (state.cartObserver) state.cartObserver.disconnect();
       state.observedCartRoot = root;
       state.cartObserver = new MutationObserver(function (mutations) {
+        function looksCartRelevant(node) {
+          try {
+            if (!node || node.nodeType !== 1) return false;
+            if (node.id === 'modal-cart') return true;
+            if (node.classList && (node.classList.contains('js-cart-item') || node.classList.contains('js-ajax-cart-list') || node.classList.contains('js-empty-ajax-cart'))) return true;
+            if (node.getAttribute) {
+              const ds = node.getAttribute('data-store');
+              if (ds && String(ds).indexOf('cart-item-') !== -1) return true;
+              const comp = node.getAttribute('data-component');
+              if (comp && String(comp).indexOf('cart') !== -1) return true;
+            }
+            if (node.querySelector) {
+              if (node.querySelector('#modal-cart,.js-cart-item,.js-ajax-cart-total.js-cart-subtotal,.js-empty-ajax-cart,[data-store=\"cart-subtotal\"]')) return true;
+            }
+            return false;
+          } catch (_) {
+            return false;
+          }
+        }
+
         for (let i = 0; i < mutations.length; i++) {
           const m = mutations[i];
           const t = m && m.target;
@@ -1650,6 +1778,31 @@
             scheduleRender();
             scheduleRemoteEval();
             return;
+          }
+
+          // Some themes update the cart by replacing the entire list without touching
+          // subtotal attributes. React to cart-related childList changes so product-scoped
+          // rules (envio/cuotas) update immediately.
+          if (m && m.type === 'childList') {
+            const relevantTarget = looksCartRelevant(t);
+            let relevantNodes = false;
+            const added = m.addedNodes || [];
+            const removed = m.removedNodes || [];
+            for (let j = 0; j < (added ? added.length : 0); j++) {
+              if (looksCartRelevant(added[j])) { relevantNodes = true; break; }
+            }
+            if (!relevantNodes) {
+              for (let j = 0; j < (removed ? removed.length : 0); j++) {
+                if (looksCartRelevant(removed[j])) { relevantNodes = true; break; }
+              }
+            }
+
+            if (relevantTarget || relevantNodes) {
+              scheduleMaintenance();
+              scheduleRender();
+              scheduleRemoteEval();
+              return;
+            }
           }
         }
       });
@@ -1692,7 +1845,8 @@
           bindModalObserver();
           maybeStartCartOpenPoll();
           patchLsCartMethods();
-          if (isCartOpen()) startBurst(1400);
+          const openish = isCartOpen() || hasCartItems() || ((getSubtotalAmount() || 0) > 0);
+          if (openish) startBurst(1400);
           scheduleRender();
           scheduleRemoteEval();
         } catch (_) {}
