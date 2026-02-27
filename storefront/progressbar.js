@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-06';
+  const APP_VERSION = '2026-02-27-07';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -672,6 +672,19 @@
         if (aria != null && String(aria).toLowerCase() === 'true') return false;
       } catch (_) {}
       return isVisible(root);
+    }
+
+    // Some themes toggle the cart in ways that our "open" detector can miss
+    // momentarily. For remote-evaluated rules (category/regalo) we still want
+    // to precompute as soon as there's evidence of a non-empty cart.
+    function isCartOpenish() {
+      if (isCartOpen()) return true;
+      if (hasCartItems()) return true;
+      const subtotal = getSubtotalAmount();
+      if (subtotal != null && subtotal > 0) return true;
+      const lsCount = getLsItemCount();
+      if (lsCount != null && lsCount > 0) return true;
+      return false;
     }
 
     function maybeStartCartOpenPoll() {
@@ -1624,8 +1637,8 @@
 
     function scheduleRemoteEval() {
       if (!detectStoreId()) return;
-      if (!isCartOpen()) return;
       if (isCartEmpty()) return;
+      if (!isCartOpenish()) return;
       if (!requiresRemoteEvaluation(state.config)) {
         state.lastRemote = null;
         state.lastRemoteKey = null;
@@ -1681,8 +1694,8 @@
 
       if (!snapshot || !evalKey) return;
       if (!detectStoreId()) return;
-      if (!isCartOpen()) return;
       if (isCartEmpty()) return;
+      if (!isCartOpenish()) return;
       if (!requiresRemoteEvaluation(state.config)) return;
 
       // Rebuild at execution time: Tiendanube can rebuild the cart DOM between
@@ -1917,7 +1930,7 @@
           bindModalObserver();
           maybeStartCartOpenPoll();
           patchLsCartMethods();
-          const openish = isCartOpen() || hasCartItems() || ((getSubtotalAmount() || 0) > 0);
+          const openish = isCartOpenish();
           if (openish) startBurst(1400);
           scheduleRender();
           scheduleRemoteEval();
