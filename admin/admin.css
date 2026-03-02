@@ -331,6 +331,24 @@ body {
   background: #ffffff;
 }
 
+.pb-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pb-range input[type="range"] {
+  flex: 1 1 auto;
+  width: 100%;
+  accent-color: var(--brand);
+}
+
+.pb-range input[type="number"] {
+  flex: 0 0 auto;
+  width: 110px;
+  text-align: right;
+}
+
 .pb-field input:focus,
 .pb-field select:focus {
   border-color: rgba(29, 93, 236, 0.62);

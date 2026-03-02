@@ -338,7 +338,12 @@
         if (c.ui_border_color) $('ui_border_color').value = String(c.ui_border_color);
         if (c.ui_track_color) $('ui_track_color').value = String(c.ui_track_color);
         if (c.ui_text_color) $('ui_text_color').value = String(c.ui_text_color);
-        if (c.ui_bar_height != null) $('ui_bar_height').value = Number(c.ui_bar_height);
+        if (c.ui_bar_height != null) {
+          const v = Number(c.ui_bar_height);
+          $('ui_bar_height').value = v;
+          const r = $('ui_bar_height_range');
+          if (r) r.value = String(v);
+        }
         if (c.ui_radius != null) $('ui_radius').value = Number(c.ui_radius);
         if (c.ui_shadow != null) $('ui_shadow').checked = !!c.ui_shadow;
         if (c.ui_animation != null) $('ui_animation').checked = !!c.ui_animation;
@@ -525,6 +530,38 @@
     initTabs();
     bindSaveAjax();
     bindCouponRedeem();
+
+    (function bindUiRangeSync() {
+      const range = $('ui_bar_height_range');
+      const number = $('ui_bar_height');
+      if (!range || !number) return;
+
+      function clamp(n) {
+        const min = Number(number.min || 6);
+        const max = Number(number.max || 24);
+        const v = Math.round(Number(n || 0));
+        if (!Number.isFinite(v)) return min;
+        return Math.max(min, Math.min(max, v));
+      }
+
+      function syncFromRange() {
+        const v = clamp(range.value);
+        number.value = String(v);
+      }
+
+      function syncFromNumber() {
+        const v = clamp(number.value);
+        number.value = String(v);
+        range.value = String(v);
+      }
+
+      range.addEventListener('input', syncFromRange);
+      number.addEventListener('input', syncFromNumber);
+      number.addEventListener('change', syncFromNumber);
+
+      // Initial sync (covers default values before config loads).
+      syncFromNumber();
+    })();
 
     const envioScopeInput = $('envio_scope');
     const cuotasScopeInput = $('cuotas_scope');

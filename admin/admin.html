@@ -77,8 +77,11 @@
                     </div>
 
                     <div class="pb-field">
-                      <label for="ui_bar_height">Altura (px)</label>
-                      <input id="ui_bar_height" type="number" min="6" max="24" name="ui_bar_height" value="10" />
+                      <label for="ui_bar_height">Espesor (px)</label>
+                      <div class="pb-range">
+                        <input id="ui_bar_height_range" type="range" min="6" max="24" step="1" value="10" aria-label="Espesor" />
+                        <input id="ui_bar_height" type="number" min="6" max="24" name="ui_bar_height" value="10" />
+                      </div>
                     </div>
 
                     <div class="pb-field">
