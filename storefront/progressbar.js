@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-11';
+  const APP_VERSION = '2026-02-27-12';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1621,9 +1621,15 @@
         const text = item.querySelector ? item.querySelector('.tn-progressbar__text,.js-pb-text') : null;
         if (!fill || !text) continue;
 
+        const color = r.color || '#008c99';
+        try { item.style.setProperty('--pb-bar', color); } catch (_) {}
+        try { item.setAttribute('data-pb-reached', Number(r.pct || 0) >= 99.95 ? '1' : '0'); } catch (_) {}
+
         fill.style.width = String(clampPct(r.pct)) + '%';
         fill.style.backgroundImage = 'none';
-        fill.style.backgroundColor = r.color || '#008c99';
+        // Use a CSS variable so the fill color can also drive modern effects
+        // (glow/gradients) in CSS without losing per-goal customization.
+        fill.style.backgroundColor = 'var(--pb-bar)';
         text.innerHTML = r.message || '&nbsp;';
       }
 
