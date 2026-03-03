@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-03-03-03';
+  const APP_VERSION = '2026-03-03-04';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1735,6 +1735,7 @@
           bumpAnimClass(item, 'pb-just-reached', 820);
         } else if (pctChanged && nextPct > 0.1) {
           bumpAnimClass(fill, 'pb-bounce', 560);
+          bumpAnimClass(item, 'pb-pct-bump', 260);
         }
       }
 
