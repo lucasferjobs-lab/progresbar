@@ -29,6 +29,18 @@
   animation: pbEnter 180ms ease-out both;
 }
 
+.tn-progressbar {
+  backdrop-filter: blur(8px) saturate(1.12);
+  -webkit-backdrop-filter: blur(8px) saturate(1.12);
+}
+
+@supports (color-mix(in srgb, white, black)) {
+  .tn-progressbar {
+    background: color-mix(in srgb, var(--pb-bg) 72%, transparent);
+    border-color: color-mix(in srgb, var(--pb-border) 55%, transparent);
+  }
+}
+
 .tn-progressbar,
 .tn-progressbar * {
   box-sizing: border-box;
@@ -66,7 +78,8 @@
 
 .tn-progressbar__item {
   --pb-bar: #008c99;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   position: relative;
   padding: 10px 10px 12px;
@@ -80,14 +93,44 @@
 
 @supports (color-mix(in srgb, white, black)) {
   .tn-progressbar__item {
-    background: color-mix(in srgb, var(--pb-bg) 76%, #ffffff);
-    border: 1px solid color-mix(in srgb, var(--pb-border) 65%, transparent);
+    background: color-mix(in srgb, var(--pb-bg) 55%, transparent);
+    border: 1px solid color-mix(in srgb, var(--pb-border) 40%, transparent);
+    backdrop-filter: blur(8px) saturate(1.08);
+    -webkit-backdrop-filter: blur(8px) saturate(1.08);
   }
 
   .tn-progressbar.pb-compact .tn-progressbar__item {
     background: transparent;
     border: 0;
   }
+}
+
+.tn-progressbar__item[data-pb-pct]::before {
+  content: attr(data-pb-pct) "%";
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  color: var(--pb-text);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
+  backdrop-filter: blur(8px) saturate(1.12);
+  -webkit-backdrop-filter: blur(8px) saturate(1.12);
+  pointer-events: none;
+}
+
+.tn-progressbar.pb-compact .tn-progressbar__item[data-pb-pct]::before {
+  display: none;
+}
+
+.tn-progressbar.pb-compact .tn-progressbar__track {
+  margin-top: 0;
 }
 
 .tn-progressbar__text {
@@ -98,20 +141,50 @@
   overflow-wrap: anywhere;
   font-weight: 600;
   letter-spacing: 0.01em;
+  order: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 18px;
 }
 
 .tn-progressbar__text strong {
   color: var(--pb-text);
 }
 
+.tn-progressbar__item[data-pb-reached="1"] .tn-progressbar__text::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill='%23ffffff' d='M7.7 13.6 4.6 10.5l1.1-1.1 2 2 6-6 1.1 1.1z'/%3E%3C/svg%3E") center/12px 12px no-repeat,
+    linear-gradient(135deg, rgba(34, 197, 94, 1), rgba(0, 184, 148, 1));
+  box-shadow: 0 10px 22px rgba(16, 185, 129, 0.28);
+  animation: pbCheckIn 220ms ease-out both;
+}
+
 .tn-progressbar__track {
   width: 100%;
   height: var(--pb-height);
-  border-radius: 999px;
+  border-radius: 20px;
   background: var(--pb-track);
   overflow: hidden;
   position: relative;
   box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.16);
+  order: 1;
+  margin-top: 18px;
+  border: 1px solid var(--pb-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+@supports (color-mix(in srgb, white, black)) {
+  .tn-progressbar__track {
+    background: color-mix(in srgb, var(--pb-track) 65%, transparent);
+    border-color: color-mix(in srgb, var(--pb-border) 40%, transparent);
+  }
 }
 
 .tn-progressbar__track::before {
@@ -127,7 +200,9 @@
   width: 0;
   height: 100%;
   border-radius: 999px;
-  background-color: var(--pb-bar);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 60%),
+    var(--pb-bar);
   will-change: width;
   transition:
     width var(--pb-speed) var(--pb-ease),
@@ -136,42 +211,56 @@
     box-shadow 260ms var(--pb-ease);
   position: relative;
   transform: translateZ(0);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 6px 18px rgba(15, 23, 42, 0.18);
-  filter: saturate(1.05);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 10px 24px rgba(15, 23, 42, 0.18);
+  filter: saturate(1.08);
 }
 
 @supports (color-mix(in srgb, white, black)) {
   .tn-progressbar__fill {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 60%),
+      linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--pb-bar) 88%, #00a6ff) 0%,
+        color-mix(in srgb, var(--pb-bar) 72%, #00e5ff) 55%,
+        color-mix(in srgb, var(--pb-bar) 86%, #00b894) 100%
+      );
     box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, #ffffff 18%, transparent),
-      0 8px 20px color-mix(in srgb, var(--pb-bar) 18%, transparent);
+      inset 0 0 0 1px color-mix(in srgb, #ffffff 16%, transparent),
+      0 12px 26px color-mix(in srgb, var(--pb-bar) 26%, transparent);
   }
 }
 
 .tn-progressbar__fill::before {
   content: "";
   position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0));
-  opacity: 0.9;
+  top: 50%;
+  right: -18px;
+  width: 44px;
+  height: calc(var(--pb-height) * 3.2);
+  transform: translateY(-50%);
+  background: radial-gradient(circle at left, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0) 62%);
+  opacity: 0.75;
   pointer-events: none;
 }
 
-/* Subtle "tech" sheen without changing the chosen brand color */
+/* Shimmer wave */
 .tn-progressbar__fill::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -55% -45%;
   background: linear-gradient(
-    90deg,
+    120deg,
     rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.42) 50%,
+    rgba(255, 255, 255, 0.65) 48%,
     rgba(255, 255, 255, 0) 100%
   );
-  transform: translateX(-140%);
-  opacity: 0.75;
-  filter: blur(0.3px);
-  animation: pbShine 1750ms var(--pb-ease) infinite;
+  transform: translateX(-120%) skewX(-18deg);
+  opacity: 0.55;
+  filter: blur(0.2px);
+  animation: pbShimmer 2000ms linear infinite;
 }
 
 .tn-progressbar.pb-no-anim .tn-progressbar__fill::before,
@@ -185,6 +274,10 @@
 
 .tn-progressbar__item[data-pb-reached="1"] .tn-progressbar__fill {
   filter: saturate(1.12);
+}
+
+.tn-progressbar__item[data-pb-reached="1"] .tn-progressbar__fill::after {
+  display: none;
 }
 
 @supports (color-mix(in srgb, white, black)) {
@@ -208,6 +301,16 @@
 @keyframes pbShine {
   0% { transform: translateX(-140%); }
   100% { transform: translateX(140%); }
+}
+
+@keyframes pbShimmer {
+  0% { transform: translateX(-120%) skewX(-18deg); }
+  100% { transform: translateX(120%) skewX(-18deg); }
+}
+
+@keyframes pbCheckIn {
+  from { transform: scale(0.75); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -244,5 +347,15 @@
 
   .tn-progressbar.pb-compact .tn-progressbar__item {
     padding: 0;
+  }
+
+  .tn-progressbar__track {
+    margin-top: 16px;
+  }
+
+  .tn-progressbar__item[data-pb-pct]::before {
+    top: 3px;
+    padding: 3px 9px;
+    font-size: 10px;
   }
 }

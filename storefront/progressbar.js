@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-02-27-12';
+  const APP_VERSION = '2026-03-03-02';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -386,6 +386,8 @@
       remoteSuccessAt: 0,
       warmAt: 0,
       lastRemotePollAt: 0,
+      lastCartOpen: false,
+      lastForceConfigAt: 0,
     };
 
     const debugEnabled = (function () {
@@ -770,11 +772,23 @@
 
     function maybeStartCartOpenPoll() {
       if (!isCartOpen()) {
+        state.lastCartOpen = false;
         if (state.openPoller) {
           try { clearInterval(state.openPoller); } catch (_) {}
           state.openPoller = null;
         }
         return;
+      }
+
+      // On open transition, force-refresh config so recent admin changes (border,
+      // compact mode, etc.) apply without waiting for a full page reload.
+      if (!state.lastCartOpen) {
+        state.lastCartOpen = true;
+        const now = Date.now();
+        if (!state.lastForceConfigAt || now - state.lastForceConfigAt > 1500) {
+          state.lastForceConfigAt = now;
+          loadConfig(true).catch(function () {});
+        }
       }
 
       if (state.openPoller) return;
@@ -1589,7 +1603,7 @@
         item.setAttribute('data-pb-key', k);
         item.innerHTML = [
           '<div class="tn-progressbar__text js-pb-text">&nbsp;</div>',
-          '<div class="tn-progressbar__track">',
+          '<div class="tn-progressbar__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">',
           '  <div class="tn-progressbar__fill js-pb-fill"></div>',
           '</div>',
         ].join('');
@@ -1619,17 +1633,20 @@
 
         const fill = item.querySelector ? item.querySelector('.tn-progressbar__fill,.js-pb-fill') : null;
         const text = item.querySelector ? item.querySelector('.tn-progressbar__text,.js-pb-text') : null;
+        const track = item.querySelector ? item.querySelector('.tn-progressbar__track') : null;
         if (!fill || !text) continue;
 
         const color = r.color || '#008c99';
         try { item.style.setProperty('--pb-bar', color); } catch (_) {}
         try { item.setAttribute('data-pb-reached', Number(r.pct || 0) >= 99.95 ? '1' : '0'); } catch (_) {}
+        try { item.setAttribute('data-pb-pct', String(Math.round(clampPct(r.pct)))); } catch (_) {}
+        try { if (track) track.setAttribute('aria-valuenow', String(Math.round(clampPct(r.pct)))); } catch (_) {}
 
         fill.style.width = String(clampPct(r.pct)) + '%';
-        fill.style.backgroundImage = 'none';
+        try { fill.style.backgroundImage = ''; } catch (_) {}
         // Use a CSS variable so the fill color can also drive modern effects
         // (glow/gradients) in CSS without losing per-goal customization.
-        fill.style.backgroundColor = 'var(--pb-bar)';
+        fill.style.backgroundColor = color;
         text.innerHTML = r.message || '&nbsp;';
       }
 

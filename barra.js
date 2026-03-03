@@ -2,7 +2,7 @@
   if (window.__TN_PROGRESSBAR_BOOTSTRAPPED__) return;
   window.__TN_PROGRESSBAR_BOOTSTRAPPED__ = true;
 
-  const BUILD_VERSION = '2026-02-27-12';
+  const BUILD_VERSION = '2026-03-03-02';
   window.__TN_PROGRESSBAR_VERSION__ = BUILD_VERSION;
   const CONFIG_FRESH_MS = 25_000;
   const WARM_INTERVAL_MS = 10 * 60 * 1000;
@@ -42,9 +42,6 @@
     script.setAttribute('data-tn-progressbar', '1');
     document.head.appendChild(script);
   }
-
-  injectCss(`${baseUrl}/static/storefront/progressbar.css${versionedQuery}`);
-  injectScript(`${baseUrl}/static/storefront/progressbar.js${versionedQuery}`);
 
   function resolveStoreId() {
     try {
@@ -139,6 +136,12 @@
 
   // Prefetch config early so the first cart open renders with custom copy/colors.
   prefetchConfig();
+
+  // Start loading assets after kicking off the config prefetch. This reduces the
+  // window where the app runs without having the latest store settings cached.
+  injectCss(`${baseUrl}/static/storefront/progressbar.css${versionedQuery}`);
+  injectScript(`${baseUrl}/static/storefront/progressbar.js${versionedQuery}`);
+
   setTimeout(prefetchConfig, 500);
   setTimeout(prefetchConfig, 2000);
 
