@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-03-03-02';
+  const APP_VERSION = '2026-03-03-03';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -388,6 +388,7 @@
       lastRemotePollAt: 0,
       lastCartOpen: false,
       lastForceConfigAt: 0,
+      reduceMotion: false,
     };
 
     const debugEnabled = (function () {
@@ -395,6 +396,14 @@
         if (srcUrl && srcUrl.searchParams && srcUrl.searchParams.get('debug') === '1') return true;
         if (srcUrl && srcUrl.searchParams && srcUrl.searchParams.get('tn_progressbar_debug') === '1') return true;
         return !!(win.localStorage && win.localStorage.getItem('tn_progressbar_debug') === '1');
+      } catch (_) {
+        return false;
+      }
+    })();
+
+    state.reduceMotion = (function () {
+      try {
+        return !!(win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches);
       } catch (_) {
         return false;
       }
@@ -1615,12 +1624,75 @@
       return item;
     }
 
+    function motionEnabled(wrapper) {
+      if (state.reduceMotion) return false;
+      if (!wrapper || !wrapper.classList) return false;
+      return !wrapper.classList.contains('pb-no-anim');
+    }
+
+    function bumpAnimClass(el, className, removeAfterMs) {
+      if (!el || !el.classList || !className) return;
+      const cls = String(className);
+      const removeMs = Math.max(0, Number(removeAfterMs || 0));
+
+      try {
+        const timers = el.__pbTimers || null;
+        const prev = timers && timers[cls] ? timers[cls] : null;
+        if (prev) clearTimeout(prev);
+      } catch (_) {}
+
+      try { el.classList.remove(cls); } catch (_) {}
+      win.requestAnimationFrame(function () {
+        try { el.classList.add(cls); } catch (_) {}
+      });
+
+      if (!removeMs) return;
+      try {
+        const timers = el.__pbTimers || (el.__pbTimers = {});
+        timers[cls] = setTimeout(function () {
+          try { el.classList.remove(cls); } catch (_) {}
+          try { timers[cls] = null; } catch (_) {}
+        }, removeMs);
+      } catch (_) {}
+    }
+
+    function setTextHtml(textEl, html, animate) {
+      if (!textEl) return;
+      const next = String(html || '&nbsp;');
+      const prev = textEl.__pbHtml;
+      if (prev === next) return;
+
+      // Always apply the text immediately; then animate the "swap" so updates
+      // never lag behind subtotal changes.
+      textEl.innerHTML = next;
+      textEl.__pbHtml = next;
+
+      // First paint should be instant (avoid delaying the initial render).
+      if (!animate || prev == null || typeof textEl.animate !== 'function') return;
+
+      try {
+        if (textEl.__pbAnim) textEl.__pbAnim.cancel();
+      } catch (_) {}
+
+      try {
+        textEl.__pbAnim = textEl.animate(
+          [
+            { opacity: 0, transform: 'translateY(2px)' },
+            { opacity: 1, transform: 'translateY(0)' },
+          ],
+          { duration: 180, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', fill: 'both' }
+        );
+      } catch (_) {}
+    }
+
     function renderUiResults(wrapper, results) {
       const list = ensureListNode(wrapper);
       if (!list) return false;
 
       const normalized = normalizeUiResults(results);
       const keep = {};
+      const prevByKey = state.lastRenderedByKey || {};
+      const motionOk = motionEnabled(wrapper);
 
       for (let i = 0; i < normalized.length; i++) {
         const r = normalized[i];
@@ -1636,18 +1708,34 @@
         const track = item.querySelector ? item.querySelector('.tn-progressbar__track') : null;
         if (!fill || !text) continue;
 
+        const nextPct = clampPct(r.pct);
+        const prev = Object.prototype.hasOwnProperty.call(prevByKey, key) ? prevByKey[key] : null;
+        const prevPct = (prev && typeof prev.pct === 'number') ? clampPct(prev.pct) : null;
+        const prevReached = prevPct != null ? prevPct >= 99.95 : false;
+        const nextReached = nextPct >= 99.95;
+        const justReached = motionOk && !prevReached && nextReached;
+        const pctChanged = motionOk && prevPct != null && Math.abs(nextPct - prevPct) >= 0.5;
+        const msg = r.message || '&nbsp;';
+        const msgChanged = motionOk && prev && typeof prev.message === 'string' && String(prev.message) !== String(msg);
+
         const color = r.color || '#008c99';
         try { item.style.setProperty('--pb-bar', color); } catch (_) {}
-        try { item.setAttribute('data-pb-reached', Number(r.pct || 0) >= 99.95 ? '1' : '0'); } catch (_) {}
-        try { item.setAttribute('data-pb-pct', String(Math.round(clampPct(r.pct)))); } catch (_) {}
-        try { if (track) track.setAttribute('aria-valuenow', String(Math.round(clampPct(r.pct)))); } catch (_) {}
+        try { item.setAttribute('data-pb-reached', nextReached ? '1' : '0'); } catch (_) {}
+        try { item.setAttribute('data-pb-pct', String(Math.round(nextPct))); } catch (_) {}
+        try { if (track) track.setAttribute('aria-valuenow', String(Math.round(nextPct))); } catch (_) {}
 
-        fill.style.width = String(clampPct(r.pct)) + '%';
+        fill.style.width = String(nextPct) + '%';
         try { fill.style.backgroundImage = ''; } catch (_) {}
         // Use a CSS variable so the fill color can also drive modern effects
         // (glow/gradients) in CSS without losing per-goal customization.
         fill.style.backgroundColor = color;
-        text.innerHTML = r.message || '&nbsp;';
+        setTextHtml(text, msg, msgChanged);
+
+        if (justReached) {
+          bumpAnimClass(item, 'pb-just-reached', 820);
+        } else if (pctChanged && nextPct > 0.1) {
+          bumpAnimClass(fill, 'pb-bounce', 560);
+        }
       }
 
       // Remove stale items (avoid duplicate/confusing old bars).

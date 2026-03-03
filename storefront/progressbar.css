@@ -11,8 +11,8 @@
   --pb-gap: 10px;
 
   /* Motion */
-  --pb-speed: 520ms;
-  --pb-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --pb-speed: 600ms;
+  --pb-ease: cubic-bezier(0.23, 1, 0.32, 1);
 
   width: 100%;
   max-width: 100%;
@@ -168,7 +168,7 @@
 .tn-progressbar__track {
   width: 100%;
   height: var(--pb-height);
-  border-radius: 20px;
+  border-radius: 999px;
   background: var(--pb-track);
   overflow: hidden;
   position: relative;
@@ -203,7 +203,7 @@
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 60%),
     var(--pb-bar);
-  will-change: width;
+  will-change: width, transform;
   transition:
     width var(--pb-speed) var(--pb-ease),
     background-color 260ms var(--pb-ease),
@@ -211,10 +211,15 @@
     box-shadow 260ms var(--pb-ease);
   position: relative;
   transform: translateZ(0);
+  transform-origin: 0% 50%;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.16),
     0 10px 24px rgba(15, 23, 42, 0.18);
   filter: saturate(1.08);
+}
+
+.tn-progressbar__fill.pb-bounce {
+  animation: pbElastic 520ms var(--pb-ease) both;
 }
 
 @supports (color-mix(in srgb, white, black)) {
@@ -272,6 +277,27 @@
   animation: none;
 }
 
+.tn-progressbar.pb-no-anim .tn-progressbar__fill {
+  transition: none;
+}
+
+.tn-progressbar.pb-no-anim .tn-progressbar__fill.pb-bounce {
+  animation: none;
+}
+
+.tn-progressbar__item.pb-just-reached .tn-progressbar__fill {
+  animation: pbSuccessPulse 720ms var(--pb-ease) both;
+}
+
+.tn-progressbar__item.pb-just-reached .tn-progressbar__track {
+  animation: pbTrackPulse 720ms var(--pb-ease) both;
+}
+
+.tn-progressbar.pb-no-anim .tn-progressbar__item.pb-just-reached .tn-progressbar__fill,
+.tn-progressbar.pb-no-anim .tn-progressbar__item.pb-just-reached .tn-progressbar__track {
+  animation: none;
+}
+
 .tn-progressbar__item[data-pb-reached="1"] .tn-progressbar__fill {
   filter: saturate(1.12);
 }
@@ -313,6 +339,53 @@
   to { transform: scale(1); opacity: 1; }
 }
 
+@keyframes pbElastic {
+  0% { transform: translateZ(0) scaleX(1) scaleY(1); }
+  58% { transform: translateZ(0) scaleX(1.02) scaleY(1.12); }
+  78% { transform: translateZ(0) scaleX(0.997) scaleY(0.985); }
+  100% { transform: translateZ(0) scaleX(1) scaleY(1); }
+}
+
+@keyframes pbSuccessPulse {
+  0% { filter: saturate(1.12) brightness(1); }
+  44% { filter: saturate(1.28) brightness(1.07); }
+  100% { filter: saturate(1.12) brightness(1); }
+}
+
+@keyframes pbTrackPulse {
+  0% { }
+  100% { }
+}
+
+@supports (color-mix(in srgb, white, black)) {
+  @keyframes pbSuccessPulse {
+    0% {
+      filter: saturate(1.12) brightness(1);
+      box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, #ffffff 20%, transparent),
+        0 10px 28px color-mix(in srgb, var(--pb-bar) 26%, transparent);
+    }
+    44% {
+      filter: saturate(1.28) brightness(1.07);
+      box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, #ffffff 26%, transparent),
+        0 18px 48px color-mix(in srgb, var(--pb-bar) 42%, transparent);
+    }
+    100% {
+      filter: saturate(1.12) brightness(1);
+      box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, #ffffff 20%, transparent),
+        0 10px 28px color-mix(in srgb, var(--pb-bar) 26%, transparent);
+    }
+  }
+
+  @keyframes pbTrackPulse {
+    0% { box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.16); }
+    44% { box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.16), 0 0 0 8px color-mix(in srgb, var(--pb-bar) 18%, transparent); }
+    100% { box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.16); }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tn-progressbar {
     animation: none;
@@ -320,6 +393,15 @@
 
   .tn-progressbar__fill {
     transition: none;
+  }
+
+  .tn-progressbar__fill.pb-bounce {
+    animation: none;
+  }
+
+  .tn-progressbar__item.pb-just-reached .tn-progressbar__fill,
+  .tn-progressbar__item.pb-just-reached .tn-progressbar__track {
+    animation: none;
   }
 
   .tn-progressbar__fill::before,
