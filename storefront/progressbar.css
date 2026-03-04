@@ -296,19 +296,6 @@
   }
 }
 
-.tn-progressbar__fill::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: -18px;
-  width: 44px;
-  height: calc(var(--pb-height) * 3.2);
-  transform: translateY(-50%);
-  background: radial-gradient(circle at left, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0) 62%);
-  opacity: 0.75;
-  pointer-events: none;
-}
-
 /* Shimmer wave */
 .tn-progressbar__fill::after {
   content: "";

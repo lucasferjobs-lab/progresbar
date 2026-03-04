@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-03-04-05';
+  const APP_VERSION = '2026-03-04-06';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
