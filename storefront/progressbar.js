@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-03-03-06';
+  const APP_VERSION = '2026-03-04-01';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1130,8 +1130,6 @@
         cfg.ui_animation,
         cfg.ui_compact,
         cfg.ui_show_icons,
-        cfg.ui_icon_size,
-        cfg.ui_icon_bubble_size,
         cfg.ui_show_percent,
         cfg.ui_shimmer,
         cfg.ui_shimmer_opacity,
@@ -1172,19 +1170,9 @@
         try { wrapper.style.removeProperty('--pb-radius'); } catch (_) {}
       }
 
-      const iconSize = Number(cfg.ui_icon_size || 0);
-      if (Number.isFinite(iconSize) && iconSize > 0) {
-        setVar('--pb-icon-size', String(Math.max(8, Math.min(24, Math.round(iconSize)))) + 'px');
-      } else {
-        try { wrapper.style.removeProperty('--pb-icon-size'); } catch (_) {}
-      }
-
-      const iconBubble = Number(cfg.ui_icon_bubble_size || 0);
-      if (Number.isFinite(iconBubble) && iconBubble > 0) {
-        setVar('--pb-icon-bubble', String(Math.max(14, Math.min(38, Math.round(iconBubble)))) + 'px');
-      } else {
-        try { wrapper.style.removeProperty('--pb-icon-bubble'); } catch (_) {}
-      }
+      // Icon sizing is fixed/responsive in CSS (not customizable).
+      try { wrapper.style.removeProperty('--pb-icon-size'); } catch (_) {}
+      try { wrapper.style.removeProperty('--pb-icon-bubble'); } catch (_) {}
 
       const shimmerOpacityRaw = cfg.ui_shimmer_opacity;
       if (shimmerOpacityRaw != null && shimmerOpacityRaw !== '' && Number.isFinite(Number(shimmerOpacityRaw))) {

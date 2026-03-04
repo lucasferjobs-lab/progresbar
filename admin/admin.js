@@ -353,18 +353,6 @@
         if (c.ui_envio_icon != null) $('ui_envio_icon').value = String(c.ui_envio_icon || '');
         if (c.ui_cuotas_icon != null) $('ui_cuotas_icon').value = String(c.ui_cuotas_icon || '');
         if (c.ui_regalo_icon != null) $('ui_regalo_icon').value = String(c.ui_regalo_icon || '');
-        if (c.ui_icon_size != null) {
-          const v = Number(c.ui_icon_size);
-          $('ui_icon_size').value = v;
-          const r = $('ui_icon_size_range');
-          if (r) r.value = String(v);
-        }
-        if (c.ui_icon_bubble_size != null) {
-          const v = Number(c.ui_icon_bubble_size);
-          $('ui_icon_bubble_size').value = v;
-          const r = $('ui_icon_bubble_size_range');
-          if (r) r.value = String(v);
-        }
 
         if (c.ui_show_percent != null) $('ui_show_percent').checked = !!c.ui_show_percent;
         if (c.ui_percent_bump != null) $('ui_percent_bump').checked = !!c.ui_percent_bump;
@@ -488,8 +476,10 @@
         const data = await res.json().catch(function () { return null; });
         if (!res.ok) {
           const msg = (data && (data.error || data.message)) ? String(data.error || data.message) : 'Save failed';
+          const httpStatus = data && data.statusCode ? Number(data.statusCode) : res.status;
+          const detail = httpStatus ? `${msg} (HTTP ${httpStatus})` : msg;
           showToast('No se pudo guardar', 'error');
-          setNexoError(msg);
+          setNexoError(detail);
           return;
         }
 
@@ -538,8 +528,10 @@
         const data = await res.json().catch(function () { return null; });
         if (!res.ok) {
           const msg = data && (data.error || data.message) ? String(data.error || data.message) : 'Cupón inválido';
+          const httpStatus = data && data.statusCode ? Number(data.statusCode) : res.status;
+          const detail = httpStatus ? `${msg} (HTTP ${httpStatus})` : msg;
           showToast('Cupón inválido', 'error');
-          setNexoError(msg);
+          setNexoError(detail);
           return;
         }
 
@@ -597,8 +589,6 @@
       }
 
       bindPair('ui_bar_height_range', 'ui_bar_height');
-      bindPair('ui_icon_size_range', 'ui_icon_size');
-      bindPair('ui_icon_bubble_size_range', 'ui_icon_bubble_size');
       bindPair('ui_shimmer_opacity_range', 'ui_shimmer_opacity');
     })();
 

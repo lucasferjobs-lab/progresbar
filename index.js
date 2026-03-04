@@ -224,7 +224,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.status(200).json({ ok: true });
+  res.status(200).json({ ok: true, statusCode: 200 });
 });
 
 // Optional helper to generate a short-lived OAuth state in case you build
@@ -232,7 +232,7 @@ app.get('/health', (_req, res) => {
 app.get('/oauth/state', (_req, res) => {
   const state = randomState();
   storeOAuthState(state);
-  res.status(200).json({ state, expires_in_ms: OAUTH_STATE_TTL_MS });
+  res.status(200).json({ state, expires_in_ms: OAUTH_STATE_TTL_MS, statusCode: 200 });
 });
 
 app.get('/api/admin/bootstrap', (_req, res) => {
@@ -243,6 +243,7 @@ app.get('/api/admin/bootstrap', (_req, res) => {
     clientId: CLIENT_ID || null,
     allowedOrigins: ADMIN_ALLOWED_ORIGINS,
     supportEmail: SUPPORT_EMAIL,
+    statusCode: 200,
   });
 });
 
@@ -258,7 +259,7 @@ app.post('/api/billing/redeem', async (req, res) => {
     .replace(/[^A-Z0-9]/g, '')
     .slice(0, 32);
 
-  if (!storeId || !code) return res.status(400).json({ error: 'Missing store_id or code' });
+  if (!storeId || !code) return res.status(400).json({ error: 'Missing store_id or code', statusCode: 400 });
 
   await ensureTiendasBillingColumns();
   await ensureBillingCouponTables();
@@ -277,7 +278,7 @@ app.post('/api/billing/redeem', async (req, res) => {
     );
     if (!storeRes.rows[0]) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Store not found' });
+      return res.status(404).json({ error: 'Store not found', statusCode: 404 });
     }
 
     const couponRes = await client.query(
@@ -291,14 +292,14 @@ app.post('/api/billing/redeem', async (req, res) => {
     const coupon = couponRes.rows[0];
     if (!coupon || coupon.is_active === false) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Invalid coupon' });
+      return res.status(404).json({ error: 'Invalid coupon', statusCode: 404 });
     }
 
     const maxUses = coupon.max_uses == null ? null : Number(coupon.max_uses);
     const usedCount = Number(coupon.used_count || 0);
     if (Number.isFinite(maxUses) && maxUses > 0 && usedCount >= maxUses) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Coupon exhausted' });
+      return res.status(409).json({ error: 'Coupon exhausted', statusCode: 409 });
     }
 
     const already = await client.query(
@@ -310,13 +311,13 @@ app.post('/api/billing/redeem', async (req, res) => {
     );
     if (already.rows[0]) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Coupon already redeemed' });
+      return res.status(409).json({ error: 'Coupon already redeemed', statusCode: 409 });
     }
 
     const days = Math.max(1, Math.min(365, Math.round(Number(coupon.free_days || 0))));
     if (!days) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Invalid coupon days' });
+      return res.status(400).json({ error: 'Invalid coupon days', statusCode: 400 });
     }
 
     await client.query(`UPDATE billing_coupons SET used_count = used_count + 1 WHERE code = $1`, [code]);
@@ -342,11 +343,11 @@ app.post('/api/billing/redeem', async (req, res) => {
     await client.query('COMMIT');
 
     console.info('[billing] coupon_redeemed', { store_id: storeId, code, free_days: days, override_until: until });
-    return res.status(200).json({ ok: true, store_id: storeId, code, free_days: days, override_until: until });
+    return res.status(200).json({ ok: true, store_id: storeId, code, free_days: days, override_until: until, statusCode: 200 });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[billing] coupon_redeem_failed:', err && err.message ? err.message : err);
-    return res.status(500).json({ error: 'Redeem failed' });
+    return res.status(500).json({ error: 'Redeem failed', statusCode: 500 });
   } finally {
     client.release();
   }
@@ -1179,11 +1180,11 @@ app.post('/admin/save', async (req, res) => {
   const uiSuccessPulse = req.body.ui_success_pulse === '1';
 
   if (!storeId) {
-    return wantsJson ? res.status(400).json({ error: 'Missing store_id' }) : res.status(400).send('Missing store_id');
+    return wantsJson ? res.status(400).json({ error: 'Missing store_id', statusCode: 400 }) : res.status(400).send('Missing store_id');
   }
   if ([envioMinAmount, cuotasThresholdAmount, regaloMinAmount, regaloTargetQty, uiBarHeight, uiRadius, uiIconSize, uiIconBubbleSize, uiShimmerOpacity, uiShimmerSpeed].some((n) => Number.isNaN(n) || n < 0)) {
     return wantsJson
-      ? res.status(400).json({ error: 'Invalid numeric values' })
+      ? res.status(400).json({ error: 'Invalid numeric values', statusCode: 400 })
       : res.status(400).send('Invalid numeric values');
   }
 
@@ -1200,7 +1201,7 @@ app.post('/admin/save', async (req, res) => {
         override_until: billing.billing_override_until || null,
       });
       return wantsJson
-        ? res.status(402).json({ error: 'Payment required' })
+        ? res.status(402).json({ error: 'Payment required', statusCode: 402 })
         : res.status(402).send('Payment required');
     }
 
@@ -1386,19 +1387,19 @@ app.post('/admin/save', async (req, res) => {
     );
 
     invalidateEvaluateCacheForStore(storeId);
-    if (wantsJson) return res.status(200).json({ ok: true });
+    if (wantsJson) return res.status(200).json({ ok: true, statusCode: 200 });
     return res.redirect(302, `/admin?store_id=${storeId}&saved=1`);
   } catch (error) {
     console.error('[admin/save] failed:', error.message);
     return wantsJson
-      ? res.status(500).json({ error: String(error.message || 'Save failed') })
+      ? res.status(500).json({ error: String(error.message || 'Save failed'), statusCode: 500 })
       : res.status(500).send('Save failed');
   }
 });
 
 app.get('/api/config/:storeId', async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
-  if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
+  if (!storeId) return res.status(400).json({ error: 'Invalid store id', statusCode: 400 });
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
@@ -1481,16 +1482,16 @@ app.get('/api/config/:storeId', async (req, res) => {
        WHERE t.store_id = $1`,
       [storeId]
     );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Config not found' });
-    return res.status(200).json(result.rows[0]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Config not found', statusCode: 404 });
+    return res.status(200).json({ ...result.rows[0], statusCode: 200 });
   } catch (error) {
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error', statusCode: 500 });
   }
 });
 
 app.post('/api/goals/:storeId/evaluate', express.text({ type: 'text/plain' }), async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
-  if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
+  if (!storeId) return res.status(400).json({ error: 'Invalid store id', statusCode: 400 });
 
   try {
     const billing = await getStoreBillingStatus(storeId).catch(() => null);
@@ -1501,7 +1502,7 @@ app.post('/api/goals/:storeId/evaluate', express.text({ type: 'text/plain' }), a
         reason: billing.billing_reason || 'inactive',
         override_until: billing.billing_override_until || null,
       });
-      return res.status(402).json({ error: 'Payment required' });
+      return res.status(402).json({ error: 'Payment required', statusCode: 402 });
     }
 
     let payload = req.body;
@@ -1513,7 +1514,7 @@ app.post('/api/goals/:storeId/evaluate', express.text({ type: 'text/plain' }), a
       }
     }
     const result = await evaluateAdvancedGoalsCached(storeId, payload || {});
-    return res.status(200).json(result);
+    return res.status(200).json({ ...result, statusCode: 200 });
   } catch (error) {
     const status = error && error.response && error.response.status;
     if (status === 402) {
@@ -1522,16 +1523,16 @@ app.post('/api/goals/:storeId/evaluate', express.text({ type: 'text/plain' }), a
         path: req.path,
       });
       await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
-      return res.status(402).json({ error: 'Payment required' });
+      return res.status(402).json({ error: 'Payment required', statusCode: 402 });
     }
     console.error('[api/goals/evaluate] failed:', error.message);
-    return res.status(500).json({ error: 'Failed to evaluate goals' });
+    return res.status(500).json({ error: 'Failed to evaluate goals', statusCode: 500 });
   }
 });
 
 app.get('/api/admin/products/:storeId/all', async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
-  if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
+  if (!storeId) return res.status(400).json({ error: 'Invalid store id', statusCode: 400 });
 
   try {
     const billing = await getStoreBillingStatus(storeId).catch(() => null);
@@ -1542,11 +1543,11 @@ app.get('/api/admin/products/:storeId/all', async (req, res) => {
         reason: billing.billing_reason || 'inactive',
         override_until: billing.billing_override_until || null,
       });
-      return res.status(402).json({ error: 'Payment required' });
+      return res.status(402).json({ error: 'Payment required', statusCode: 402 });
     }
 
     const accessToken = await getStoreAccessToken(storeId);
-    if (!accessToken) return res.status(404).json({ error: 'Store token not found' });
+    if (!accessToken) return res.status(404).json({ error: 'Store token not found', statusCode: 404 });
 
     const headers = {
       Authentication: `bearer ${accessToken}`,
@@ -1567,7 +1568,7 @@ app.get('/api/admin/products/:storeId/all', async (req, res) => {
       if (list.length < pageSize) break;
     }
 
-    return res.status(200).json({ items: all.slice(0, 2000) });
+    return res.status(200).json({ items: all.slice(0, 2000), statusCode: 200 });
   } catch (error) {
     const status = error && error.response && error.response.status;
     if (status === 402) {
@@ -1576,16 +1577,16 @@ app.get('/api/admin/products/:storeId/all', async (req, res) => {
         path: req.path,
       });
       await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
-      return res.status(402).json({ error: 'Payment required' });
+      return res.status(402).json({ error: 'Payment required', statusCode: 402 });
     }
     const detail = error.response?.data || error.message;
-    return res.status(500).json({ error: 'Load products failed', detail });
+    return res.status(500).json({ error: 'Load products failed', detail, statusCode: 500 });
   }
 });
 
 app.get('/api/admin/categories/:storeId/all', async (req, res) => {
   const storeId = String(req.params.storeId || '').replace(/[^0-9]/g, '');
-  if (!storeId) return res.status(400).json({ error: 'Invalid store id' });
+  if (!storeId) return res.status(400).json({ error: 'Invalid store id', statusCode: 400 });
 
   try {
     const billing = await getStoreBillingStatus(storeId).catch(() => null);
@@ -1596,11 +1597,11 @@ app.get('/api/admin/categories/:storeId/all', async (req, res) => {
         reason: billing.billing_reason || 'inactive',
         override_until: billing.billing_override_until || null,
       });
-      return res.status(402).json({ error: 'Payment required' });
+      return res.status(402).json({ error: 'Payment required', statusCode: 402 });
     }
 
     const accessToken = await getStoreAccessToken(storeId);
-    if (!accessToken) return res.status(404).json({ error: 'Store token not found' });
+    if (!accessToken) return res.status(404).json({ error: 'Store token not found', statusCode: 404 });
 
     const headers = {
       Authentication: `bearer ${accessToken}`,
@@ -1621,7 +1622,7 @@ app.get('/api/admin/categories/:storeId/all', async (req, res) => {
       if (list.length < pageSize) break;
     }
 
-    return res.status(200).json({ items: all.slice(0, 2000) });
+    return res.status(200).json({ items: all.slice(0, 2000), statusCode: 200 });
   } catch (error) {
     const status = error && error.response && error.response.status;
     if (status === 402) {
@@ -1630,10 +1631,10 @@ app.get('/api/admin/categories/:storeId/all', async (req, res) => {
         path: req.path,
       });
       await setStoreBillingStatus(storeId, false, 'payment_required').catch(() => {});
-      return res.status(402).json({ error: 'Payment required' });
+      return res.status(402).json({ error: 'Payment required', statusCode: 402 });
     }
     const detail = error.response?.data || error.message;
-    return res.status(500).json({ error: 'Load categories failed', detail });
+    return res.status(500).json({ error: 'Load categories failed', detail, statusCode: 500 });
   }
 });
 
