@@ -442,14 +442,27 @@ async function ensureGoalSettingsTable() {
       ui_border_color VARCHAR(32),
       ui_track_color VARCHAR(32),
       ui_text_color VARCHAR(32),
-      ui_bar_height INTEGER DEFAULT 10,
-      ui_radius INTEGER DEFAULT 14,
-      ui_shadow BOOLEAN DEFAULT TRUE,
-      ui_animation BOOLEAN DEFAULT TRUE,
-      ui_compact BOOLEAN DEFAULT FALSE,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+       ui_bar_height INTEGER DEFAULT 10,
+       ui_radius INTEGER DEFAULT 14,
+       ui_shadow BOOLEAN DEFAULT TRUE,
+       ui_animation BOOLEAN DEFAULT TRUE,
+       ui_compact BOOLEAN DEFAULT FALSE,
+       ui_show_icons BOOLEAN DEFAULT TRUE,
+       ui_envio_icon VARCHAR(32),
+       ui_cuotas_icon VARCHAR(32),
+       ui_regalo_icon VARCHAR(32),
+       ui_icon_size INTEGER DEFAULT 12,
+       ui_icon_bubble_size INTEGER DEFAULT 18,
+       ui_show_percent BOOLEAN DEFAULT TRUE,
+       ui_percent_bump BOOLEAN DEFAULT TRUE,
+       ui_shimmer BOOLEAN DEFAULT TRUE,
+       ui_shimmer_opacity INTEGER DEFAULT 38,
+       ui_shimmer_speed INTEGER DEFAULT 2000,
+       ui_elastic BOOLEAN DEFAULT TRUE,
+       ui_success_pulse BOOLEAN DEFAULT TRUE,
+       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+     );
+   `);
 
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS enable_envio_rule BOOLEAN DEFAULT TRUE;`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS enable_cuotas_rule BOOLEAN DEFAULT TRUE;`);
@@ -488,6 +501,19 @@ async function ensureGoalSettingsTable() {
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_shadow BOOLEAN DEFAULT TRUE;`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_animation BOOLEAN DEFAULT TRUE;`);
   await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_compact BOOLEAN DEFAULT FALSE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_show_icons BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_envio_icon VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_cuotas_icon VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_regalo_icon VARCHAR(32);`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_icon_size INTEGER DEFAULT 12;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_icon_bubble_size INTEGER DEFAULT 18;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_show_percent BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_percent_bump BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_shimmer BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_shimmer_opacity INTEGER DEFAULT 38;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_shimmer_speed INTEGER DEFAULT 2000;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_elastic BOOLEAN DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE store_goal_settings ADD COLUMN IF NOT EXISTS ui_success_pulse BOOLEAN DEFAULT TRUE;`);
 
   goalSettingsTableReady = true;
 }
@@ -1138,11 +1164,24 @@ app.post('/admin/save', async (req, res) => {
   const uiShadow = req.body.ui_shadow === '1';
   const uiAnimation = req.body.ui_animation === '1';
   const uiCompact = req.body.ui_compact === '1';
+  const uiShowIcons = req.body.ui_show_icons === '1';
+  const uiEnvioIcon = String(req.body.ui_envio_icon || '').trim();
+  const uiCuotasIcon = String(req.body.ui_cuotas_icon || '').trim();
+  const uiRegaloIcon = String(req.body.ui_regalo_icon || '').trim();
+  const uiIconSize = Math.max(0, Math.min(18, Math.round(Number(req.body.ui_icon_size || 0))));
+  const uiIconBubbleSize = Math.max(0, Math.min(26, Math.round(Number(req.body.ui_icon_bubble_size || 0))));
+  const uiShowPercent = req.body.ui_show_percent === '1';
+  const uiPercentBump = req.body.ui_percent_bump === '1';
+  const uiShimmer = req.body.ui_shimmer === '1';
+  const uiShimmerOpacity = Math.max(0, Math.min(60, Math.round(Number(req.body.ui_shimmer_opacity || 0))));
+  const uiShimmerSpeed = Math.max(0, Math.min(6000, Math.round(Number(req.body.ui_shimmer_speed || 0))));
+  const uiElastic = req.body.ui_elastic === '1';
+  const uiSuccessPulse = req.body.ui_success_pulse === '1';
 
   if (!storeId) {
     return wantsJson ? res.status(400).json({ error: 'Missing store_id' }) : res.status(400).send('Missing store_id');
   }
-  if ([envioMinAmount, cuotasThresholdAmount, regaloMinAmount, regaloTargetQty, uiBarHeight, uiRadius].some((n) => Number.isNaN(n) || n < 0)) {
+  if ([envioMinAmount, cuotasThresholdAmount, regaloMinAmount, regaloTargetQty, uiBarHeight, uiRadius, uiIconSize, uiIconBubbleSize, uiShimmerOpacity, uiShimmerSpeed].some((n) => Number.isNaN(n) || n < 0)) {
     return wantsJson
       ? res.status(400).json({ error: 'Invalid numeric values' })
       : res.status(400).send('Invalid numeric values');
@@ -1214,9 +1253,22 @@ app.post('/admin/save', async (req, res) => {
          ui_shadow,
          ui_animation,
          ui_compact,
+         ui_show_icons,
+         ui_envio_icon,
+         ui_cuotas_icon,
+         ui_regalo_icon,
+         ui_icon_size,
+         ui_icon_bubble_size,
+         ui_show_percent,
+         ui_percent_bump,
+         ui_shimmer,
+         ui_shimmer_opacity,
+         ui_shimmer_speed,
+         ui_elastic,
+         ui_success_pulse,
          updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13, $14, NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''), $20, $21, NULLIF($22, ''), NULLIF($23, ''), $24, $25, $26, NULLIF($27, ''), $28, $29, NULLIF($30, ''), NULLIF($31, ''), NULLIF($32, ''), NULLIF($33, ''), NULLIF($34, ''), NULLIF($35, ''), NULLIF($36, ''), NULLIF($37, ''), $38, $39, $40, $41, $42, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13, $14, NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''), $20, $21, NULLIF($22, ''), NULLIF($23, ''), $24, $25, $26, NULLIF($27, ''), $28, $29, NULLIF($30, ''), NULLIF($31, ''), NULLIF($32, ''), NULLIF($33, ''), NULLIF($34, ''), NULLIF($35, ''), NULLIF($36, ''), NULLIF($37, ''), $38, $39, $40, $41, $42, $43, NULLIF($44, ''), NULLIF($45, ''), NULLIF($46, ''), $47, $48, $49, $50, $51, $52, $53, $54, $55, CURRENT_TIMESTAMP)
        ON CONFLICT (store_id)
        DO UPDATE SET
          enable_envio_rule = EXCLUDED.enable_envio_rule,
@@ -1257,10 +1309,23 @@ app.post('/admin/save', async (req, res) => {
          ui_text_color = EXCLUDED.ui_text_color,
          ui_bar_height = EXCLUDED.ui_bar_height,
          ui_radius = EXCLUDED.ui_radius,
-         ui_shadow = EXCLUDED.ui_shadow,
-         ui_animation = EXCLUDED.ui_animation,
-         ui_compact = EXCLUDED.ui_compact,
-         updated_at = CURRENT_TIMESTAMP`,
+          ui_shadow = EXCLUDED.ui_shadow,
+          ui_animation = EXCLUDED.ui_animation,
+          ui_compact = EXCLUDED.ui_compact,
+          ui_show_icons = EXCLUDED.ui_show_icons,
+          ui_envio_icon = EXCLUDED.ui_envio_icon,
+          ui_cuotas_icon = EXCLUDED.ui_cuotas_icon,
+          ui_regalo_icon = EXCLUDED.ui_regalo_icon,
+          ui_icon_size = EXCLUDED.ui_icon_size,
+          ui_icon_bubble_size = EXCLUDED.ui_icon_bubble_size,
+          ui_show_percent = EXCLUDED.ui_show_percent,
+          ui_percent_bump = EXCLUDED.ui_percent_bump,
+          ui_shimmer = EXCLUDED.ui_shimmer,
+          ui_shimmer_opacity = EXCLUDED.ui_shimmer_opacity,
+          ui_shimmer_speed = EXCLUDED.ui_shimmer_speed,
+          ui_elastic = EXCLUDED.ui_elastic,
+          ui_success_pulse = EXCLUDED.ui_success_pulse,
+          updated_at = CURRENT_TIMESTAMP`,
       [
         storeId,
         enableEnvioRule,
@@ -1304,6 +1369,19 @@ app.post('/admin/save', async (req, res) => {
         uiShadow,
         uiAnimation,
         uiCompact,
+        uiShowIcons,
+        uiEnvioIcon,
+        uiCuotasIcon,
+        uiRegaloIcon,
+        uiIconSize,
+        uiIconBubbleSize,
+        uiShowPercent,
+        uiPercentBump,
+        uiShimmer,
+        uiShimmerOpacity,
+        uiShimmerSpeed,
+        uiElastic,
+        uiSuccessPulse,
       ]
     );
 
@@ -1380,12 +1458,25 @@ app.get('/api/config/:storeId', async (req, res) => {
               s.ui_border_color,
               s.ui_track_color,
               s.ui_text_color,
-              s.ui_bar_height,
-              s.ui_radius,
-              s.ui_shadow,
-              s.ui_animation,
-              s.ui_compact
-       FROM tiendas t
+               s.ui_bar_height,
+               s.ui_radius,
+               s.ui_shadow,
+               s.ui_animation,
+               s.ui_compact,
+               s.ui_show_icons,
+               s.ui_envio_icon,
+               s.ui_cuotas_icon,
+               s.ui_regalo_icon,
+               s.ui_icon_size,
+               s.ui_icon_bubble_size,
+               s.ui_show_percent,
+               s.ui_percent_bump,
+               s.ui_shimmer,
+               s.ui_shimmer_opacity,
+               s.ui_shimmer_speed,
+               s.ui_elastic,
+               s.ui_success_pulse
+        FROM tiendas t
        LEFT JOIN store_goal_settings s ON s.store_id = t.store_id
        WHERE t.store_id = $1`,
       [storeId]

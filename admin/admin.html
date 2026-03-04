@@ -109,6 +109,120 @@
                         <span>Modo compacto</span>
                       </label>
                     </div>
+
+                    <div class="pb-field" style="grid-column: 1 / -1; margin-top: 6px;">
+                      <div class="pb-muted">Iconos y efectos</div>
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_show_icons" type="checkbox" name="ui_show_icons" value="1" checked />
+                        <span>Iconos</span>
+                      </label>
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_icon_size">Tamano icono (px)</label>
+                      <div class="pb-range">
+                        <input id="ui_icon_size_range" type="range" min="8" max="18" step="1" value="12" aria-label="Tamano icono" />
+                        <input id="ui_icon_size" type="number" min="8" max="18" name="ui_icon_size" value="12" />
+                      </div>
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_icon_bubble_size">Tamano burbuja (px)</label>
+                      <div class="pb-range">
+                        <input id="ui_icon_bubble_size_range" type="range" min="14" max="26" step="1" value="18" aria-label="Tamano burbuja" />
+                        <input id="ui_icon_bubble_size" type="number" min="14" max="26" name="ui_icon_bubble_size" value="18" />
+                      </div>
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_envio_icon">Icono envio</label>
+                      <select id="ui_envio_icon" name="ui_envio_icon">
+                        <option value="truck">Camion</option>
+                        <option value="cart">Carrito</option>
+                        <option value="card">Tarjeta</option>
+                        <option value="coin">Moneda</option>
+                        <option value="gift">Regalo</option>
+                        <option value="lock">Candado</option>
+                        <option value="none">Sin icono</option>
+                      </select>
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_cuotas_icon">Icono cuotas</label>
+                      <select id="ui_cuotas_icon" name="ui_cuotas_icon">
+                        <option value="card">Tarjeta</option>
+                        <option value="coin">Moneda</option>
+                        <option value="cart">Carrito</option>
+                        <option value="truck">Camion</option>
+                        <option value="gift">Regalo</option>
+                        <option value="lock">Candado</option>
+                        <option value="none">Sin icono</option>
+                      </select>
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_regalo_icon">Icono regalo</label>
+                      <select id="ui_regalo_icon" name="ui_regalo_icon">
+                        <option value="gift">Regalo</option>
+                        <option value="cart">Carrito</option>
+                        <option value="truck">Camion</option>
+                        <option value="card">Tarjeta</option>
+                        <option value="coin">Moneda</option>
+                        <option value="lock">Candado</option>
+                        <option value="none">Sin icono</option>
+                      </select>
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_show_percent" type="checkbox" name="ui_show_percent" value="1" checked />
+                        <span>Porcentaje</span>
+                      </label>
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_percent_bump" type="checkbox" name="ui_percent_bump" value="1" checked />
+                        <span>Animar porcentaje</span>
+                      </label>
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_shimmer" type="checkbox" name="ui_shimmer" value="1" checked />
+                        <span>Shimmer</span>
+                      </label>
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_shimmer_opacity">Intensidad shimmer</label>
+                      <div class="pb-range">
+                        <input id="ui_shimmer_opacity_range" type="range" min="0" max="60" step="1" value="38" aria-label="Intensidad shimmer" />
+                        <input id="ui_shimmer_opacity" type="number" min="0" max="60" name="ui_shimmer_opacity" value="38" />
+                      </div>
+                    </div>
+
+                    <div class="pb-field">
+                      <label for="ui_shimmer_speed">Velocidad shimmer (ms)</label>
+                      <input id="ui_shimmer_speed" type="number" min="900" max="6000" name="ui_shimmer_speed" value="2000" />
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_elastic" type="checkbox" name="ui_elastic" value="1" checked />
+                        <span>Elasticidad</span>
+                      </label>
+                    </div>
+
+                    <div class="pb-field">
+                      <label class="pb-toggle">
+                        <input id="ui_success_pulse" type="checkbox" name="ui_success_pulse" value="1" checked />
+                        <span>Pulso al completar</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
 
@@ -392,14 +506,6 @@
                 <details>
                   <summary>¿Qué significa &quot;Aplica a&quot;?</summary>
                   <p>Define qué subtotal se usa para calcular el progreso: todo el carrito, un producto o una categoría.</p>
-                </details>
-                <details>
-                  <summary>¿Por qué no veo nada con el carrito vacío?</summary>
-                  <p>La app no muestra UI cuando el carrito está vacío para mantener la experiencia limpia.</p>
-                </details>
-                <details>
-                  <summary>¿Hay límite de API?</summary>
-                  <p>Para reglas por categoría y regalos usamos evaluación avanzada y caché para reducir peticiones.</p>
                 </details>
                 <details>
                   <summary>Tips CRO para aumentar el ticket promedio</summary>

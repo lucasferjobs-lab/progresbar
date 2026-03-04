@@ -349,6 +349,38 @@
         if (c.ui_animation != null) $('ui_animation').checked = !!c.ui_animation;
         if (c.ui_compact != null) $('ui_compact').checked = !!c.ui_compact;
 
+        if (c.ui_show_icons != null) $('ui_show_icons').checked = !!c.ui_show_icons;
+        if (c.ui_envio_icon != null) $('ui_envio_icon').value = String(c.ui_envio_icon || '');
+        if (c.ui_cuotas_icon != null) $('ui_cuotas_icon').value = String(c.ui_cuotas_icon || '');
+        if (c.ui_regalo_icon != null) $('ui_regalo_icon').value = String(c.ui_regalo_icon || '');
+        if (c.ui_icon_size != null) {
+          const v = Number(c.ui_icon_size);
+          $('ui_icon_size').value = v;
+          const r = $('ui_icon_size_range');
+          if (r) r.value = String(v);
+        }
+        if (c.ui_icon_bubble_size != null) {
+          const v = Number(c.ui_icon_bubble_size);
+          $('ui_icon_bubble_size').value = v;
+          const r = $('ui_icon_bubble_size_range');
+          if (r) r.value = String(v);
+        }
+
+        if (c.ui_show_percent != null) $('ui_show_percent').checked = !!c.ui_show_percent;
+        if (c.ui_percent_bump != null) $('ui_percent_bump').checked = !!c.ui_percent_bump;
+
+        if (c.ui_shimmer != null) $('ui_shimmer').checked = !!c.ui_shimmer;
+        if (c.ui_shimmer_opacity != null) {
+          const v = Number(c.ui_shimmer_opacity);
+          $('ui_shimmer_opacity').value = v;
+          const r = $('ui_shimmer_opacity_range');
+          if (r) r.value = String(v);
+        }
+        if (c.ui_shimmer_speed != null) $('ui_shimmer_speed').value = Number(c.ui_shimmer_speed);
+
+        if (c.ui_elastic != null) $('ui_elastic').checked = !!c.ui_elastic;
+        if (c.ui_success_pulse != null) $('ui_success_pulse').checked = !!c.ui_success_pulse;
+
         preselected.envio_category_id = String(c.envio_category_id || '');
         preselected.envio_product_id = String(c.envio_product_id || '');
         preselected.cuotas_category_id = String(c.cuotas_category_id || '');
@@ -532,35 +564,42 @@
     bindCouponRedeem();
 
     (function bindUiRangeSync() {
-      const range = $('ui_bar_height_range');
-      const number = $('ui_bar_height');
-      if (!range || !number) return;
+      function bindPair(rangeId, numberId) {
+        const range = $(rangeId);
+        const number = $(numberId);
+        if (!range || !number) return;
 
-      function clamp(n) {
-        const min = Number(number.min || 6);
-        const max = Number(number.max || 24);
-        const v = Math.round(Number(n || 0));
-        if (!Number.isFinite(v)) return min;
-        return Math.max(min, Math.min(max, v));
+        function clamp(n) {
+          const min = Number(number.min || 0);
+          const max = Number(number.max || 100);
+          const v = Math.round(Number(n || 0));
+          if (!Number.isFinite(v)) return min;
+          return Math.max(min, Math.min(max, v));
+        }
+
+        function syncFromRange() {
+          const v = clamp(range.value);
+          number.value = String(v);
+        }
+
+        function syncFromNumber() {
+          const v = clamp(number.value);
+          number.value = String(v);
+          range.value = String(v);
+        }
+
+        range.addEventListener('input', syncFromRange);
+        number.addEventListener('input', syncFromNumber);
+        number.addEventListener('change', syncFromNumber);
+
+        // Initial sync (covers default values before config loads).
+        syncFromNumber();
       }
 
-      function syncFromRange() {
-        const v = clamp(range.value);
-        number.value = String(v);
-      }
-
-      function syncFromNumber() {
-        const v = clamp(number.value);
-        number.value = String(v);
-        range.value = String(v);
-      }
-
-      range.addEventListener('input', syncFromRange);
-      number.addEventListener('input', syncFromNumber);
-      number.addEventListener('change', syncFromNumber);
-
-      // Initial sync (covers default values before config loads).
-      syncFromNumber();
+      bindPair('ui_bar_height_range', 'ui_bar_height');
+      bindPair('ui_icon_size_range', 'ui_icon_size');
+      bindPair('ui_icon_bubble_size_range', 'ui_icon_bubble_size');
+      bindPair('ui_shimmer_opacity_range', 'ui_shimmer_opacity');
     })();
 
     const envioScopeInput = $('envio_scope');

@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-03-03-04';
+  const APP_VERSION = '2026-03-03-05';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1129,6 +1129,16 @@
         cfg.ui_shadow,
         cfg.ui_animation,
         cfg.ui_compact,
+        cfg.ui_show_icons,
+        cfg.ui_icon_size,
+        cfg.ui_icon_bubble_size,
+        cfg.ui_show_percent,
+        cfg.ui_shimmer,
+        cfg.ui_shimmer_opacity,
+        cfg.ui_shimmer_speed,
+        cfg.ui_elastic,
+        cfg.ui_success_pulse,
+        cfg.ui_percent_bump,
       ].map(function (v) { return v == null ? '' : String(v); }).join('|');
 
       if (state.lastUiThemeKey === themeKey) return;
@@ -1162,9 +1172,47 @@
         try { wrapper.style.removeProperty('--pb-radius'); } catch (_) {}
       }
 
+      const iconSize = Number(cfg.ui_icon_size || 0);
+      if (Number.isFinite(iconSize) && iconSize > 0) {
+        setVar('--pb-icon-size', String(Math.max(8, Math.min(18, Math.round(iconSize)))) + 'px');
+      } else {
+        try { wrapper.style.removeProperty('--pb-icon-size'); } catch (_) {}
+      }
+
+      const iconBubble = Number(cfg.ui_icon_bubble_size || 0);
+      if (Number.isFinite(iconBubble) && iconBubble > 0) {
+        setVar('--pb-icon-bubble', String(Math.max(14, Math.min(26, Math.round(iconBubble)))) + 'px');
+      } else {
+        try { wrapper.style.removeProperty('--pb-icon-bubble'); } catch (_) {}
+      }
+
+      const shimmerOpacityRaw = cfg.ui_shimmer_opacity;
+      if (shimmerOpacityRaw != null && shimmerOpacityRaw !== '' && Number.isFinite(Number(shimmerOpacityRaw))) {
+        const opacity = Math.max(0, Math.min(0.6, Number(shimmerOpacityRaw) / 100));
+        const alpha = Math.max(0, Math.min(0.85, opacity + 0.07));
+        setVar('--pb-shimmer-opacity', opacity.toFixed(2));
+        setVar('--pb-shimmer-alpha', alpha.toFixed(2));
+      } else {
+        try { wrapper.style.removeProperty('--pb-shimmer-opacity'); } catch (_) {}
+        try { wrapper.style.removeProperty('--pb-shimmer-alpha'); } catch (_) {}
+      }
+
+      const shimmerSpeed = Number(cfg.ui_shimmer_speed);
+      if (Number.isFinite(shimmerSpeed) && shimmerSpeed > 0) {
+        setVar('--pb-shimmer-speed', String(Math.max(900, Math.min(6000, Math.round(shimmerSpeed)))) + 'ms');
+      } else {
+        try { wrapper.style.removeProperty('--pb-shimmer-speed'); } catch (_) {}
+      }
+
       wrapper.classList.toggle('pb-no-shadow', cfg.ui_shadow === false);
       wrapper.classList.toggle('pb-no-anim', cfg.ui_animation === false);
       wrapper.classList.toggle('pb-compact', cfg.ui_compact === true);
+      wrapper.classList.toggle('pb-no-icons', cfg.ui_show_icons === false);
+      wrapper.classList.toggle('pb-hide-percent', cfg.ui_show_percent === false);
+      wrapper.classList.toggle('pb-no-shimmer', cfg.ui_shimmer === false);
+      wrapper.classList.toggle('pb-no-elastic', cfg.ui_elastic === false);
+      wrapper.classList.toggle('pb-no-success', cfg.ui_success_pulse === false);
+      wrapper.classList.toggle('pb-no-pct-bump', cfg.ui_percent_bump === false);
     }
 
     function toUiAmountResult(key, eligibleSubtotal, threshold, cfg, options) {
@@ -1685,6 +1733,34 @@
       } catch (_) {}
     }
 
+    const ICON_DEFAULT_BY_GOAL = { envio: 'truck', cuotas: 'card', regalo: 'gift' };
+    const ICON_ALLOWED = (function () {
+      const out = {};
+      ['truck', 'cart', 'card', 'coin', 'gift', 'lock', 'none'].forEach(function (k) { out[k] = true; });
+      return out;
+    })();
+
+    function normalizeIconName(value, fallback) {
+      const v = String(value || '').trim().toLowerCase();
+      if (!v) return fallback;
+      if (Object.prototype.hasOwnProperty.call(ICON_ALLOWED, v)) return v;
+      return fallback;
+    }
+
+    function iconForGoalKey(goalKey) {
+      const k = String(goalKey || '').trim().toLowerCase();
+      const cfg = state.config || null;
+      const fallback = Object.prototype.hasOwnProperty.call(ICON_DEFAULT_BY_GOAL, k) ? ICON_DEFAULT_BY_GOAL[k] : 'none';
+      if (!cfg) return fallback;
+      if (cfg.ui_show_icons === false) return 'none';
+
+      let raw = '';
+      if (k === 'envio') raw = cfg.ui_envio_icon;
+      else if (k === 'cuotas') raw = cfg.ui_cuotas_icon;
+      else if (k === 'regalo') raw = cfg.ui_regalo_icon;
+      return normalizeIconName(raw, fallback);
+    }
+
     function renderUiResults(wrapper, results) {
       const list = ensureListNode(wrapper);
       if (!list) return false;
@@ -1693,6 +1769,9 @@
       const keep = {};
       const prevByKey = state.lastRenderedByKey || {};
       const motionOk = motionEnabled(wrapper);
+      const allowElastic = motionOk && !(wrapper.classList && wrapper.classList.contains('pb-no-elastic'));
+      const allowSuccess = motionOk && !(wrapper.classList && wrapper.classList.contains('pb-no-success'));
+      const allowPctBump = motionOk && !(wrapper.classList && wrapper.classList.contains('pb-no-pct-bump'));
 
       for (let i = 0; i < normalized.length; i++) {
         const r = normalized[i];
@@ -1702,6 +1781,8 @@
 
         const item = ensureItemNode(list, key);
         if (!item) continue;
+
+        try { item.setAttribute('data-pb-icon', iconForGoalKey(key)); } catch (_) {}
 
         const fill = item.querySelector ? item.querySelector('.tn-progressbar__fill,.js-pb-fill') : null;
         const text = item.querySelector ? item.querySelector('.tn-progressbar__text,.js-pb-text') : null;
@@ -1713,8 +1794,8 @@
         const prevPct = (prev && typeof prev.pct === 'number') ? clampPct(prev.pct) : null;
         const prevReached = prevPct != null ? prevPct >= 99.95 : false;
         const nextReached = nextPct >= 99.95;
-        const justReached = motionOk && !prevReached && nextReached;
-        const pctChanged = motionOk && prevPct != null && Math.abs(nextPct - prevPct) >= 0.5;
+        const justReached = allowSuccess && !prevReached && nextReached;
+        const pctChanged = prevPct != null && Math.abs(nextPct - prevPct) >= 0.5;
         const msg = r.message || '&nbsp;';
         const msgChanged = motionOk && prev && typeof prev.message === 'string' && String(prev.message) !== String(msg);
 
@@ -1734,8 +1815,8 @@
         if (justReached) {
           bumpAnimClass(item, 'pb-just-reached', 820);
         } else if (pctChanged && nextPct > 0.1) {
-          bumpAnimClass(fill, 'pb-bounce', 560);
-          bumpAnimClass(item, 'pb-pct-bump', 260);
+          if (allowElastic) bumpAnimClass(fill, 'pb-bounce', 560);
+          if (allowPctBump) bumpAnimClass(item, 'pb-pct-bump', 260);
         }
       }
 
