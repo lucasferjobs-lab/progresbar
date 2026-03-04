@@ -350,9 +350,6 @@
         if (c.ui_compact != null) $('ui_compact').checked = !!c.ui_compact;
 
         if (c.ui_show_icons != null) $('ui_show_icons').checked = !!c.ui_show_icons;
-        if (c.ui_envio_icon != null) $('ui_envio_icon').value = String(c.ui_envio_icon || '');
-        if (c.ui_cuotas_icon != null) $('ui_cuotas_icon').value = String(c.ui_cuotas_icon || '');
-        if (c.ui_regalo_icon != null) $('ui_regalo_icon').value = String(c.ui_regalo_icon || '');
 
         if (c.ui_show_percent != null) $('ui_show_percent').checked = !!c.ui_show_percent;
         if (c.ui_percent_bump != null) $('ui_percent_bump').checked = !!c.ui_percent_bump;

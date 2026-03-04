@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-03-04-03';
+  const APP_VERSION = '2026-03-04-05';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1722,31 +1722,13 @@
     }
 
     const ICON_DEFAULT_BY_GOAL = { envio: 'truck', cuotas: 'card', regalo: 'gift' };
-    const ICON_ALLOWED = (function () {
-      const out = {};
-      ['truck', 'cart', 'card', 'coin', 'gift', 'lock', 'none'].forEach(function (k) { out[k] = true; });
-      return out;
-    })();
-
-    function normalizeIconName(value, fallback) {
-      const v = String(value || '').trim().toLowerCase();
-      if (!v) return fallback;
-      if (Object.prototype.hasOwnProperty.call(ICON_ALLOWED, v)) return v;
-      return fallback;
-    }
 
     function iconForGoalKey(goalKey) {
       const k = String(goalKey || '').trim().toLowerCase();
       const cfg = state.config || null;
       const fallback = Object.prototype.hasOwnProperty.call(ICON_DEFAULT_BY_GOAL, k) ? ICON_DEFAULT_BY_GOAL[k] : 'none';
-      if (!cfg) return fallback;
-      if (cfg.ui_show_icons === false) return 'none';
-
-      let raw = '';
-      if (k === 'envio') raw = cfg.ui_envio_icon;
-      else if (k === 'cuotas') raw = cfg.ui_cuotas_icon;
-      else if (k === 'regalo') raw = cfg.ui_regalo_icon;
-      return normalizeIconName(raw, fallback);
+      if (cfg && cfg.ui_show_icons === false) return 'none';
+      return fallback;
     }
 
     function renderUiResults(wrapper, results) {
