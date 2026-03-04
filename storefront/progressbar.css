@@ -164,6 +164,7 @@
   justify-content: center;
   gap: 8px;
   min-height: 18px;
+  min-height: max(18px, var(--pb-icon-bubble));
 }
 
 .tn-progressbar__text strong {
@@ -188,7 +189,9 @@
   background-color: var(--pb-bar);
   background-position: center;
   background-repeat: no-repeat;
-  background-size: var(--pb-icon-size) var(--pb-icon-size);
+  background-size:
+    min(var(--pb-icon-size), calc(var(--pb-icon-bubble) - 4px))
+    min(var(--pb-icon-size), calc(var(--pb-icon-bubble) - 4px));
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.14);
   flex: 0 0 auto;
 }

@@ -1168,8 +1168,8 @@ app.post('/admin/save', async (req, res) => {
   const uiEnvioIcon = String(req.body.ui_envio_icon || '').trim();
   const uiCuotasIcon = String(req.body.ui_cuotas_icon || '').trim();
   const uiRegaloIcon = String(req.body.ui_regalo_icon || '').trim();
-  const uiIconSize = Math.max(0, Math.min(18, Math.round(Number(req.body.ui_icon_size || 0))));
-  const uiIconBubbleSize = Math.max(0, Math.min(26, Math.round(Number(req.body.ui_icon_bubble_size || 0))));
+  const uiIconSize = Math.max(0, Math.min(24, Math.round(Number(req.body.ui_icon_size || 0))));
+  const uiIconBubbleSize = Math.max(0, Math.min(38, Math.round(Number(req.body.ui_icon_bubble_size || 0))));
   const uiShowPercent = req.body.ui_show_percent === '1';
   const uiPercentBump = req.body.ui_percent_bump === '1';
   const uiShimmer = req.body.ui_shimmer === '1';

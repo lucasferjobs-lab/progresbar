@@ -9,7 +9,7 @@
     api.init(root);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const APP_VERSION = '2026-03-03-05';
+  const APP_VERSION = '2026-03-03-06';
 
   function clampPct(pct) {
     const n = Number(pct || 0);
@@ -1174,14 +1174,14 @@
 
       const iconSize = Number(cfg.ui_icon_size || 0);
       if (Number.isFinite(iconSize) && iconSize > 0) {
-        setVar('--pb-icon-size', String(Math.max(8, Math.min(18, Math.round(iconSize)))) + 'px');
+        setVar('--pb-icon-size', String(Math.max(8, Math.min(24, Math.round(iconSize)))) + 'px');
       } else {
         try { wrapper.style.removeProperty('--pb-icon-size'); } catch (_) {}
       }
 
       const iconBubble = Number(cfg.ui_icon_bubble_size || 0);
       if (Number.isFinite(iconBubble) && iconBubble > 0) {
-        setVar('--pb-icon-bubble', String(Math.max(14, Math.min(26, Math.round(iconBubble)))) + 'px');
+        setVar('--pb-icon-bubble', String(Math.max(14, Math.min(38, Math.round(iconBubble)))) + 'px');
       } else {
         try { wrapper.style.removeProperty('--pb-icon-bubble'); } catch (_) {}
       }
