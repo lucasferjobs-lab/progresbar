@@ -1,4 +1,8 @@
 ﻿node_modules/
+
+# Normalize line endings
+* text=auto eol=lf
+
 .env
 npm-debug.log*
 *.tgz
