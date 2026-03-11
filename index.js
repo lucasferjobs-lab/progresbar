@@ -98,7 +98,7 @@ app.use((req, res, next) => {
   // 1. Permitimos explícitamente el iframe de Tiendanube
   const cspDirectives = [
     `frame-ancestors 'self' ${frameAncestorsAllowed}`,
-    `frame-src 'self' https://progresbar.onrender.com ${frameAncestorsAllowed}`,
+    `frame-src 'self' https://progresbar.onrender.com *.mitiendanube.com:* *.lojavirtualnuvem.com.br:* cirrus.tiendanube.com:* *.tiendanube.com:* *.nuvemshop.com.br:* tn.panel.vici.la platform.twitter.com:* www.facebook.com:* ct.pinterest.com:* *.pintergration.com:* bat.bing.com:* dev.visualwebsiteoptimizer.com:* *.doubleclick.net:* *.getbeamer.com:* *.myperfit.net:* *.mercadolibre.com:* *.cloudflare.com:*`,
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://unpkg.com",
     "style-src 'self' 'unsafe-inline'",
@@ -219,6 +219,35 @@ app.use('/static', express.static(path.join(__dirname), {
     }
   },
 }));
+// FIX: Rutas para archivos con hash (evitar errores 404)
+app.get('/vendor-:hash.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', 'application/javascript');
+  return res.status(200).send('// Vendor placeholder - ' + req.params.hash);
+});
+
+app.get('/index-:hash.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', 'application/javascript');
+  return res.status(200).send('// Index placeholder - ' + req.params.hash);
+});
+
+// Ruta general para cualquier archivo JS con hash
+app.get('/:name-:hash.js', (req, res, next) => {
+  if (req.params.name === 'barra') {
+    return next();
+  }
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', 'application/javascript');
+  return res.status(200).send(`// ${req.params.name} placeholder - ${req.params.hash}`);
+});
+
 app.get('/barra.js', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -233,8 +262,31 @@ app.get('/', (req, res) => {
   return res.redirect(302, `/admin${query}`);
 });
 
+// FIX: Health check mejorado para evitar errores 503
 app.get('/health', (_req, res) => {
-  res.status(200).json({ ok: true, statusCode: 200 });
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.status(200).json({ 
+    ok: true, 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    service: 'progressbar-tiendanube',
+    version: '1.0.0'
+  });
+});
+
+// Ruta de status adicional
+app.get('/status', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.status(200).json({
+    server: 'running',
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    env: process.env.NODE_ENV || 'development'
+  });
 });
 
 // Optional helper to generate a short-lived OAuth state in case you build
@@ -1649,6 +1701,30 @@ app.get('/api/admin/categories/:storeId/all', async (req, res) => {
 });
 
 registerPortalRoutes(app, pool, { clientId: CLIENT_ID });
+
+// FIX: Middleware para manejo de errores (evitar 503)
+app.use((err, req, res, next) => {
+  console.error('Server error:', err.message);
+  
+  if (res.headersSent) {
+    return next(err);
+  }
+  
+  // Manejo específico de errores 503
+  if (err.status === 503 || err.code === 'ECONNREFUSED') {
+    return res.status(503).json({
+      error: 'Service Temporarily Unavailable',
+      message: 'Please try again later',
+      retryAfter: 30
+    });
+  }
+  
+  // Error genérico
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : err.message
+  });
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] running on port ${PORT}`);
