@@ -96,7 +96,17 @@ app.use((req, res, next) => {
   ].join(' ');
 
   // 1. Permitimos explícitamente el iframe de Tiendanube
-  res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${frameAncestorsAllowed};`);
+  const cspDirectives = [
+    `frame-ancestors 'self' ${frameAncestorsAllowed}`,
+    `frame-src 'self' https://progresbar.onrender.com ${frameAncestorsAllowed}`,
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://unpkg.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'"
+  ].join('; ');
+  res.setHeader('Content-Security-Policy', cspDirectives);
 
   // 2. Removemos restricciones de servidores antiguos
   res.removeHeader('X-Frame-Options');
