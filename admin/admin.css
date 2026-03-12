@@ -27,6 +27,7 @@ body {
   margin: 0;
   padding: 0;
   line-height: 1.5;
+  overflow-x: hidden;
 }
 
 .pb-app {
@@ -156,6 +157,7 @@ body {
   flex: 1;
   padding: var(--tn-padding);
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .pb-view {
@@ -607,5 +609,77 @@ body {
   
   .pb-faq {
     padding: 16px;
+  }
+}
+
+/* Responsive extra para iframes más angostos (modo móvil estricto) */
+@media (max-width: 480px) {
+  .pb-header {
+    padding: 12px;
+  }
+
+  .pb-header__meta {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .pb-chip {
+    font-size: 11px;
+    padding: 3px 10px;
+  }
+
+  .pb-sign {
+    font-size: 12px;
+  }
+
+  .pb-nav {
+    padding: 0 8px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .pb-nav__btn {
+    flex: 0 0 auto;
+    padding: 10px 16px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .pb-card {
+    margin-bottom: 16px;
+  }
+
+  .pb-card__head h1 {
+    font-size: 20px;
+  }
+
+  .pb-field label {
+    font-size: 13px;
+  }
+
+  .pb-field input,
+  .pb-field select,
+  .pb-field textarea {
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+
+  .pb-actions {
+    padding-top: 12px;
+  }
+
+  .pb-primary {
+    width: 100%;
+    font-size: 14px;
+    padding: 10px 16px;
+  }
+
+  .pb-toast {
+    left: 12px;
+    right: 12px;
+    top: auto;
+    bottom: 16px;
+    max-width: none;
   }
 }
