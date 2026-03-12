@@ -554,4 +554,144 @@
       console.error('Error loading dropdowns:', error);
     }
   }
+
+  // Entrypoint principal: inicializa la app integrada dentro del Admin
+  doc.addEventListener('DOMContentLoaded', async () => {
+    try {
+      // Bloqueamos la UI mientras conectamos
+      setSettingsLocked(true, 'Conectando con Tiendanube...');
+
+      // 1) Bootstrap desde el backend (clientId, orígenes permitidos, soporte)
+      try {
+        const resp = await fetch('/api/admin/bootstrap', {
+          cache: 'no-store',
+          headers: { Accept: 'application/json' }
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && typeof data === 'object') {
+            if (data.clientId) CLIENT_ID = data.clientId;
+            if (Array.isArray(data.allowedOrigins) && data.allowedOrigins.length) {
+              ADMIN_ALLOWED_ORIGINS = data.allowedOrigins;
+            }
+            if (data.supportEmail) {
+              SUPPORT_EMAIL = String(data.supportEmail || '').trim();
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Bootstrap error:', err);
+      }
+
+      // 2) Inicializar navegación y tabs básicos
+      initViews();
+      initTabs();
+
+      // Listeners de scopes
+      const envioScope = $('envio_scope');
+      if (envioScope) {
+        envioScope.addEventListener('change', () => {
+          toggleScope(envioScope.value, $('envio_product_wrap'), $('envio_category_wrap'));
+        });
+      }
+      const cuotasScope = $('cuotas_scope');
+      if (cuotasScope) {
+        cuotasScope.addEventListener('change', () => {
+          toggleScope(cuotasScope.value, $('cuotas_product_wrap'), $('cuotas_category_wrap'));
+        });
+      }
+
+      // Listeners de regalo
+      const regaloModeInput = $('regalo_mode');
+      if (regaloModeInput) {
+        regaloModeInput.addEventListener('change', toggleRegaloMode);
+      }
+      const regaloTargetTypeInput = $('regalo_target_type');
+      if (regaloTargetTypeInput) {
+        regaloTargetTypeInput.addEventListener('change', toggleRegaloTargetType);
+      }
+
+      // Listener para botón de cupón de facturación
+      const couponBtn = $('couponRedeemBtn');
+      const couponInput = $('couponCode');
+      if (couponBtn && couponInput) {
+        couponBtn.addEventListener('click', async () => {
+          const storeId = sanitizeStoreId($('storeId') && $('storeId').value);
+          const code = String(couponInput.value || '').trim().toUpperCase();
+          if (!storeId || !code) {
+            showToast('Ingresá el código de cupón.', 'error');
+            return;
+          }
+          try {
+            couponBtn.disabled = true;
+            const resp = await fetch('/api/billing/redeem', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json'
+              },
+              body: JSON.stringify({ store_id: storeId, code })
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok || data.statusCode >= 400) {
+              const msg = data && data.error ? String(data.error) : 'No se pudo aplicar el cupón.';
+              showToast(msg, 'error');
+            } else {
+              showToast('Cupón aplicado correctamente.', null);
+              // Refrescar panel de facturación
+              const cfgRes = await fetch(`/api/config/${encodeURIComponent(storeId)}`, {
+                cache: 'no-store',
+                headers: { Accept: 'application/json' }
+              });
+              if (cfgRes.ok) {
+                const config = await cfgRes.json();
+                updateBillingPanel(config);
+              }
+            }
+          } catch (err) {
+            console.error('Coupon redeem error:', err);
+            showToast('Error al aplicar el cupón.', 'error');
+          } finally {
+            couponBtn.disabled = false;
+          }
+        });
+      }
+
+      // Link de soporte por email
+      const supportBtn = $('supportEmailBtn');
+      if (supportBtn) {
+        supportBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          const email = SUPPORT_EMAIL || 'contacto@franfersoluciones.com';
+          const subject = encodeURIComponent('Consulta sobre ProgressBar CRO');
+          const body = encodeURIComponent('Hola,\n\nNecesito ayuda con la configuración de ProgressBar en mi tienda Tiendanube.\n\nGracias.');
+          window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+        });
+      }
+
+      // 3) Resolver store_id a través de Nexo (flujo oficial)
+      const storeId = await resolveStoreIdViaNexo();
+      if (!storeId) {
+        setNexoError('No se pudo obtener la tienda desde Nexo. Cerrá y volvé a abrir la app desde el Admin de Tiendanube.');
+        setSettingsLocked(true);
+        return;
+      }
+
+      // 4) Actualizar UI con el store_id
+      const storeInput = $('storeId');
+      const storeLabel = $('storeLabel');
+      if (storeInput) storeInput.value = storeId;
+      if (storeLabel) storeLabel.textContent = `#${storeId}`;
+
+      setNexoError('');
+      setSettingsLocked(false);
+
+      // 5) Cargar configuración inicial y combos
+      await hydrateFormFromConfig(storeId);
+    } catch (err) {
+      console.error('Admin init error:', err);
+      setNexoError('Ocurrió un error al inicializar la app. Intentá recargar la página.');
+      setSettingsLocked(true);
+    }
+  });
 })(); //

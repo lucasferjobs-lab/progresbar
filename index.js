@@ -99,7 +99,7 @@ app.use((req, res, next) => {
   // 1. Permitimos explícitamente el iframe de Tiendanube
   const cspDirectives = [
     `frame-ancestors 'self' ${frameAncestorsAllowed}`,
-    `frame-src 'self' https://progresbar.onrender.com *.mitiendanube.com:* *.lojavirtualnuvem.com.br:* cirrus.tiendanube.com:* *.tiendanube.com:* *.nuvemshop.com.br:* tn.panel.vici.la platform.twitter.com:* www.facebook.com:* ct.pinterest.com:* *.pintergration.com:* bat.bing.com:* dev.visualwebsiteoptimizer.com:* *.doubleclick.net:* *.getbeamer.com:* *.myperfit.net:* *.mercadolibre.com:* *.cloudflare.com:*`,
+    `frame-src 'self' https://progresbar.onrender.com https://cirrus.tiendanube.com *.mitiendanube.com:* *.lojavirtualnuvem.com.br:* cirrus.tiendanube.com:* *.tiendanube.com:* *.nuvemshop.com.br:* tn.panel.vici.la platform.twitter.com:* www.facebook.com:* ct.pinterest.com:* *.pintergration.com:* bat.bing.com:* dev.visualwebsiteoptimizer.com:* *.doubleclick.net:* *.getbeamer.com:* *.myperfit.net:* *.mercadolibre.com:* *.cloudflare.com:*`,
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://unpkg.com",
     "style-src 'self' 'unsafe-inline'",
@@ -262,14 +262,23 @@ app.get('/estilos.css', (_req, res) => res.sendFile(path.join(__dirname, 'styles
 
 // --- RUTAS PWA PARA TIENDANUBE ---
 app.get('/manifest.json', (_req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
-  return res.sendFile(path.join(__dirname, 'manifest.json'));
+res.setHeader('Content-Type', 'application/json');
+res.setHeader('Cache-Control', 'public, max-age=3600');
+return res.sendFile(path.join(__dirname, 'manifest.json'));
 });
-
 app.get('/favicon.ico', (_req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  return res.status(204).end();
+res.setHeader('Cache-Control', 'public, max-age=86400');
+return res.status(204).end();
+});
+// Iconos de Apple (evitar 404)
+app.get('/assets/icon/apple-icon-:size.png', (_req, res) => {
+res.setHeader('Cache-Control', 'public, max-age=86400');
+res.setHeader('Content-Type', 'image/png');
+return res.status(204).end();
+});
+app.get('/apple-icon.png', (_req, res) => {
+res.setHeader('Cache-Control', 'public, max-age=86400');
+return res.status(204).end();
 });
 
 // --- RUTAS DE AUTENTICACIÓN TIENDANUBE (evitar 404) ---
