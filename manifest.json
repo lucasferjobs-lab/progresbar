@@ -1,0 +1,23 @@
+{
+  "name": "ProgressBar CRO",
+  "description": "Barra de progreso para aumentar el ticket promedio en el carrito",
+  "version": "1.0.0",
+  "author": "FRANFER Soluciones",
+  "icons": {
+    "72": "https://progresbar.onrender.com/static/admin/icon-72.png",
+    "96": "https://progresbar.onrender.com/static/admin/icon-96.png",
+    "128": "https://progresbar.onrender.com/static/admin/icon-128.png",
+    "144": "https://progresbar.onrender.com/static/admin/icon-144.png",
+    "152": "https://progresbar.onrender.com/static/admin/icon-152.png",
+    "192": "https://progresbar.onrender.com/static/admin/icon-192.png",
+    "384": "https://progresbar.onrender.com/static/admin/icon-384.png",
+    "512": "https://progresbar.onrender.com/static/admin/icon-512.png"
+  },
+  "start_url": "https://progresbar.onrender.com/admin",
+  "display": "standalone",
+  "theme_color": "#F2F4F7",
+  "background_color": "#ffffff",
+  "scope": "/admin/",
+  "orientation": "any",
+  "permissions": []
+}
