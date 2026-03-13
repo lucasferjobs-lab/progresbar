@@ -344,7 +344,7 @@
         link.rel = 'stylesheet';
         link.href = baseUrl + '/static/storefront/progressbar.css';
         var head = doc.head || doc.body || doc.documentElement;
-        if (head) head.appendChild(link);
+        safeAppendChild(head, link);
       } catch (_) {}
     })();
     const CONFIG_FRESH_MS = 25_000;
@@ -658,6 +658,28 @@
       } catch (_) {
         return null;
       }
+    }
+
+    function safeAppendChild(parentNode, childNode) {
+      if (!parentNode || !childNode) return false;
+      try {
+        if (typeof parentNode.appendChild !== 'function') return false;
+        parentNode.appendChild(childNode);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function safeInsertBefore(parentNode, node, referenceNode) {
+      if (!parentNode || !node) return false;
+      try {
+        if (typeof parentNode.insertBefore === 'function') {
+          parentNode.insertBefore(node, referenceNode || null);
+          return true;
+        }
+      } catch (_) {}
+      return safeAppendChild(parentNode, node);
     }
 
     function getCartContainer() {
@@ -1076,31 +1098,42 @@
       const cartList = body && body.querySelector ? body.querySelector('.js-ajax-cart-list') : (root.querySelector ? root.querySelector('.js-ajax-cart-list') : null);
       if (body && cartList && cartList.parentNode) {
         // Prefer inside the cart body, right above products.
-        cartList.parentNode.insertBefore(wrapper, cartList);
-        dbg('mount:ok', { at: 'before_list', container: elSummary(container) }, 'info');
-        return wrapper;
+        if (safeInsertBefore(cartList.parentNode, wrapper, cartList)) {
+          dbg('mount:ok', { at: 'before_list', container: elSummary(container) }, 'info');
+          return wrapper;
+        }
       }
       if (body) {
-        body.insertBefore(wrapper, body.firstChild);
-        dbg('mount:ok', { at: 'inside_body', container: elSummary(container) }, 'info');
-        return wrapper;
+        if (safeInsertBefore(body, wrapper, body.firstChild)) {
+          dbg('mount:ok', { at: 'inside_body', container: elSummary(container) }, 'info');
+          return wrapper;
+        }
       }
 
       const subtotalRow = root.querySelector ? root.querySelector('[data-store="cart-subtotal"]') : null;
       if (subtotalRow && subtotalRow.parentNode) {
-        subtotalRow.parentNode.insertBefore(wrapper, subtotalRow);
-        dbg('mount:ok', { at: 'before_subtotal', container: elSummary(container) }, 'info');
-        return wrapper;
+        if (safeInsertBefore(subtotalRow.parentNode, wrapper, subtotalRow)) {
+          dbg('mount:ok', { at: 'before_subtotal', container: elSummary(container) }, 'info');
+          return wrapper;
+        }
       }
 
       const anchor = getSubtotalNode() || (root.querySelector ? root.querySelector('.js-cart-item') : null);
-      if (!anchor || !anchor.parentNode) {
-        dbg('mount:no_anchor', null);
-        return null;
+      if (anchor && anchor.parentNode) {
+        if (safeInsertBefore(anchor.parentNode, wrapper, anchor)) {
+          dbg('mount:ok', { at: 'anchor', container: elSummary(container) }, 'info');
+          return wrapper;
+        }
       }
-      anchor.parentNode.insertBefore(wrapper, anchor);
-      dbg('mount:ok', { at: 'anchor', container: elSummary(container) }, 'info');
-      return wrapper;
+
+      // Last resort: mount at the very top of the container to guarantee markup exists.
+      if (safeInsertBefore(root, wrapper, root.firstChild)) {
+        dbg('mount:ok', { at: 'container_fallback', container: elSummary(container) }, 'info');
+        return wrapper;
+      }
+
+      dbg('mount:no_anchor', null);
+      return null;
     }
 
     function removeBar() {
@@ -1637,65 +1670,79 @@
       }).map(function (k) { return byKey[k]; });
     }
 
+    function isListContainerNode(node) {
+      try {
+        return !!(node && node.nodeType === 1 && node.getAttribute && String(node.getAttribute('data-pb-list') || '') === '1');
+      } catch (_) {
+        return false;
+      }
+    }
+
     function ensureListNode(wrapper) {
-    if (!wrapper) return null;
-    let list = wrapper.querySelector('[data-pb-list="1"]');
-    if (!list) {
-      wrapper.innerHTML = '<div class="tn-progressbar__main-view" data-pb-list="1"></div>';
-      list = wrapper.querySelector('[data-pb-list="1"]');
-    }
-    return list;
-  }
+      if (!wrapper || wrapper.nodeType !== 1 || typeof wrapper.querySelector !== 'function') return null;
 
-  // Sustitución del motor de renderizado para BARRA ÚNICA MULTI-NIVEL
-  function renderUiResults(wrapper, results) {
-    const list = ensureListNode(wrapper);
-    if (!list) return false;
+      let list = null;
+      try { list = wrapper.querySelector('[data-pb-list="1"]'); } catch (_) { list = null; }
+      if (list && typeof list.appendChild === 'function') return list;
 
-    const normalized = normalizeUiResults(results);
-    if (!normalized.length) return false;
+      // Older versions might have single-bar markup. Repair to multi list.
+      try {
+        const next = doc.createElement('div');
+        next.className = 'tn-progressbar__list';
+        next.setAttribute('data-pb-list', '1');
 
-    // Calculamos el progreso visual basado en la meta más alta actual
-    const currentProgress = Math.max(...normalized.map(function(r) { return r.pct; }));
-    const mainResult = normalized.find(function(r) { return r.pct < 100; }) || normalized[normalized.length - 1];
-    const motionOk = motionEnabled(wrapper);
+        while (wrapper.firstChild) wrapper.removeChild(wrapper.firstChild);
+        if (!safeAppendChild(wrapper, next)) return null;
+        return next;
+      } catch (_) {}
 
-    // Renderizado de estructura única (Single Bar Layout)
-    list.innerHTML = [
-      '<div class="tn-progressbar__text js-pb-text">', mainResult.message, '</div>',
-      '<div class="tn-progressbar__track">',
-        '<div class="tn-progressbar__fill js-pb-fill" style="width: ', currentProgress, '%;"></div>',
-        '<div class="tn-milestones-layer">',
-          normalized.map(function(r) {
-            const isReached = r.pct >= 99.9;
-            return [
-              '<div class="tn-milestone ', (isReached ? 'is-reached' : ''), '" style="left: ', r.pct, '%">',
-                '<div class="tn-milestone-dot">', (isReached ? '✓' : ''), '</div>',
-                '<span class="tn-milestone-label">', (r.key === 'envio' ? 'Envío' : r.key === 'cuotas' ? 'Cuotas' : 'Regalo'), '</span>',
-              '</div>'
-            ].join('');
-          }).join(''),
-        '</div>',
-      '</div>'
-    ].join('');
-
-    // Actualizamos el estado interno para que los Observers y Pulses sigan funcionando
-    const nextByKey = {};
-    for (let i = 0; i < normalized.length; i++) {
-      nextByKey[String(normalized[i].key)] = normalized[i];
-    }
-    state.lastRenderedByKey = nextByKey;
-    state.lastRendered = mainResult;
-
-    // Disparar animaciones de feedback visual
-    const fill = list.querySelector('.js-pb-fill');
-    if (fill && motionOk && currentProgress > 0) {
-      if (mainResult.color) fill.style.backgroundColor = mainResult.color;
-      bumpAnimClass(fill, 'pb-bounce', 560);
+      try {
+        wrapper.innerHTML = '<div class="tn-progressbar__list" data-pb-list="1"></div>';
+      } catch (_) {}
+      try { list = wrapper.querySelector('[data-pb-list="1"]'); } catch (_) { list = null; }
+      return (list && typeof list.appendChild === 'function') ? list : null;
     }
 
-    return true;
-  }
+    function ensureItemNode(list, key) {
+      // Tolerate swapped args: ensureItemNode('envio', listEl)
+      if ((typeof list === 'string' || typeof list === 'number') && key && typeof key === 'object' && key.nodeType) {
+        const tmp = list;
+        list = key;
+        key = tmp;
+      }
+
+      if (!list || key == null || key === '') return null;
+
+      // Tolerate passing wrapper instead of list container.
+      if (!isListContainerNode(list) && typeof list.querySelector === 'function') {
+        const maybeList = ensureListNode(list);
+        if (maybeList) list = maybeList;
+      }
+
+      if (!isListContainerNode(list) || typeof list.querySelector !== 'function' || typeof list.appendChild !== 'function') return null;
+
+      const k = String(key);
+      let item = null;
+      try { item = list.querySelector('[data-pb-key="' + k + '"]'); } catch (_) { item = null; }
+      if (item) return item;
+
+      try {
+        item = doc.createElement('div');
+        item.className = 'tn-progressbar__item';
+        item.setAttribute('data-pb-key', k);
+        item.innerHTML = [
+          '<div class="tn-progressbar__text js-pb-text">&nbsp;</div>',
+          '<div class="tn-progressbar__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">',
+          '  <div class="tn-progressbar__fill js-pb-fill"></div>',
+          '</div>',
+        ].join('');
+        if (!safeAppendChild(list, item)) return null;
+      } catch (_) {
+        return null;
+      }
+
+      return item;
+    }
 
     function motionEnabled(wrapper) {
       if (state.reduceMotion) return false;
@@ -1768,21 +1815,51 @@
       return fallback;
     }
 
-    // Función auxiliar para crear o recuperar el contenedor de la barra
-function ensureItemNode(id, parentNode, tag = 'div') {
-    if (!parentNode) return null;
-    let node = document.getElementById(id);
-    if (!node) {
-        node = document.createElement(tag);
-        node.id = id;
-        parentNode.appendChild(node);
-    }
-    return node;
-}
-
     function renderUiResults(wrapper, results) {
       const list = ensureListNode(wrapper);
       if (!list) return false;
+
+      function ensureItemNodeFallback(listNode, keyValue) {
+        // Minimal inline fallback in case ensureItemNode is not reachable in some environments.
+        // (e.g. block scoping differences across browsers/build steps).
+        if ((typeof listNode === 'string' || typeof listNode === 'number') && keyValue && typeof keyValue === 'object' && keyValue.nodeType) {
+          const tmp = listNode;
+          listNode = keyValue;
+          keyValue = tmp;
+        }
+
+        if (!listNode || keyValue == null || keyValue === '') return null;
+
+        if (!isListContainerNode(listNode) && typeof listNode.querySelector === 'function') {
+          const maybeList = ensureListNode(listNode);
+          if (maybeList) listNode = maybeList;
+        }
+
+        if (!isListContainerNode(listNode) || typeof listNode.querySelector !== 'function' || typeof listNode.appendChild !== 'function') return null;
+
+        const k = String(keyValue);
+        let item = null;
+        try { item = listNode.querySelector('[data-pb-key="' + k + '"]'); } catch (_) { item = null; }
+        if (item) return item;
+
+        try {
+          item = doc.createElement('div');
+          item.className = 'tn-progressbar__item';
+          item.setAttribute('data-pb-key', k);
+          item.innerHTML = [
+            '<div class="tn-progressbar__text js-pb-text">&nbsp;</div>',
+            '<div class="tn-progressbar__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">',
+            '  <div class="tn-progressbar__fill js-pb-fill"></div>',
+            '</div>',
+          ].join('');
+          if (!safeAppendChild(listNode, item)) return null;
+          return item;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      const ensureItem = (typeof ensureItemNode === 'function') ? ensureItemNode : ensureItemNodeFallback;
 
       const normalized = normalizeUiResults(results);
       const keep = {};
@@ -1798,7 +1875,7 @@ function ensureItemNode(id, parentNode, tag = 'div') {
         const key = String(r.key);
         keep[key] = true;
 
-        const item = ensureItemNode(list, key);
+        const item = ensureItem(list, key);
         if (!item) continue;
 
         try { item.setAttribute('data-pb-icon', iconForGoalKey(key)); } catch (_) {}
