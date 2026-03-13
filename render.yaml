@@ -1,0 +1,23 @@
+# Render Blueprint - ProgressBar Tiendanube
+# https://render.com/docs/blueprint-spec
+#
+# Producción: conectar este repo y usar branch main (o master).
+# Staging: duplicar el servicio en el dashboard y apuntar a branch "staging";
+#          o crear un segundo servicio desde este mismo blueprint con otro nombre y branch.
+
+services:
+  - type: web
+    name: progressbar
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      # Configurar en el dashboard de Render (Environment):
+      # - APP_BASE_URL = URL pública del servicio (ej. https://progressbar-xxx.onrender.com)
+      # - TIENDANUBE_CLIENT_ID, TIENDANUBE_CLIENT_SECRET
+      # - Variables de DB_* para PostgreSQL

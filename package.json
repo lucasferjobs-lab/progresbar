@@ -1,10 +1,11 @@
-﻿{
+{
     "name":  "progressbar",
     "version":  "1.0.0",
     "description":  "",
     "main":  "index.js",
     "scripts":  {
                     "start":  "node index.js",
+                    "start:staging":  "node index.js",
                     "init-db":  "node init-db.js",
                     "test":  "node tests/progressbar.test.js"
                 },

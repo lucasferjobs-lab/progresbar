@@ -334,6 +334,19 @@
     const baseUrl = srcUrl ? srcUrl.origin : win.location.origin;
     let storeId = srcUrl ? (srcUrl.searchParams.get('store_id') || srcUrl.searchParams.get('store')) : null;
     const bootAt = Date.now();
+
+    (function injectStorefrontStyles() {
+      try {
+        var id = 'tn-progressbar-styles';
+        if (doc.getElementById(id)) return;
+        var link = doc.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        link.href = baseUrl + '/static/storefront/progressbar.css';
+        var head = doc.head || doc.body || doc.documentElement;
+        if (head) head.appendChild(link);
+      } catch (_) {}
+    })();
     const CONFIG_FRESH_MS = 25_000;
 
     // Intentionally no console logs in production.
@@ -1438,7 +1451,10 @@
       }
       const d = defaults || {};
       const color = String(r.bar_color || d.color || '#008c99');
-      if (r.reached) {
+      const missing = Number(r.missing_amount || 0);
+      const progress = Number(r.progress || 0);
+      const effectivelyReached = r.reached === true || (missing <= 0 && progress >= 0.99);
+      if (effectivelyReached) {
         const out = {
           key,
           pct: 100,
@@ -1452,8 +1468,8 @@
       const sfx = String(r.text_suffix || '').trim();
       const out = {
         key,
-        pct: clampPct(Number(r.progress || 0) * 100),
-        message: `${pfx || 'Te faltan'} <strong>$${money(r.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
+        pct: clampPct(progress * 100),
+        message: `${pfx || 'Te faltan'} <strong>$${money(missing)}</strong> ${sfx || ''}`.trim(),
         color,
       };
       goalLog(goal, 'remote', { result: 'ok', reached: false, scope: r.scope, threshold: r.threshold_amount, eligible_subtotal: r.eligible_subtotal, missing_amount: r.missing_amount, pct: out.pct });
@@ -1475,7 +1491,10 @@
         return null;
       }
       const color = String(r.bar_color || '#77c3a7');
-      if (r.reached) {
+      const missing = Number(r.missing_amount || 0);
+      const progress = Number(r.progress || 0);
+      const effectivelyReached = r.reached === true || (missing <= 0 && progress >= 0.99);
+      if (effectivelyReached) {
         const out = {
           key: 'regalo',
           pct: 100,
@@ -1489,8 +1508,8 @@
       const sfx = String(r.text_suffix || '').trim();
       const out = {
         key: 'regalo',
-        pct: clampPct(Number(r.progress || 0) * 100),
-        message: `${pfx || 'Te faltan'} <strong>$${money(r.missing_amount || 0)}</strong> ${sfx || ''}`.trim(),
+        pct: clampPct(progress * 100),
+        message: `${pfx || 'Te faltan'} <strong>$${money(missing)}</strong> ${sfx || ''}`.trim(),
         color,
       };
       goalLog('regalo', 'remote', { result: 'ok', reached: false, mode: r.mode, missing_amount: r.missing_amount, pct: out.pct });
