@@ -1268,11 +1268,8 @@
       }
 
       if (scope === 'all') {
-        if (total <= 0) {
-          goalLog('envio', 'local', { result: null, scope, threshold, total, reason: 'total<=0' });
-          return null;
-        }
-        const r = toUiAmountResult('envio', total, threshold, cfg, {
+        const eligibleSubtotal = Math.max(0, Number(total) || 0);
+        const r = toUiAmountResult('envio', eligibleSubtotal, threshold, cfg, {
           color: cfg.envio_bar_color || '#008c99',
           text_prefix: cfg.envio_text_prefix,
           text_suffix: cfg.envio_text_suffix,
@@ -1284,9 +1281,9 @@
           result: 'ok',
           scope,
           threshold,
-          total,
-          eligible_subtotal: total,
-          missing_amount: Math.max(0, threshold - total),
+          total: eligibleSubtotal,
+          eligible_subtotal: eligibleSubtotal,
+          missing_amount: Math.max(0, threshold - eligibleSubtotal),
           pct: r ? r.pct : null,
         });
         return r;
@@ -1356,11 +1353,8 @@
       }
 
       if (scope === 'all') {
-        if (total <= 0) {
-          goalLog('cuotas', 'local', { result: null, scope, threshold, total, reason: 'total<=0' });
-          return null;
-        }
-        const r = toUiAmountResult('cuotas', total, threshold, cfg, {
+        const eligibleSubtotal = Math.max(0, Number(total) || 0);
+        const r = toUiAmountResult('cuotas', eligibleSubtotal, threshold, cfg, {
           color: cfg.cuotas_bar_color || '#fbb03b',
           text_prefix: cfg.cuotas_text_prefix,
           text_suffix: cfg.cuotas_text_suffix,
@@ -1372,9 +1366,9 @@
           result: 'ok',
           scope,
           threshold,
-          total,
-          eligible_subtotal: total,
-          missing_amount: Math.max(0, threshold - total),
+          total: eligibleSubtotal,
+          eligible_subtotal: eligibleSubtotal,
+          missing_amount: Math.max(0, threshold - eligibleSubtotal),
           pct: r ? r.pct : null,
         });
         return r;

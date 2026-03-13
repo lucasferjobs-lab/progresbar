@@ -334,10 +334,12 @@ body {
   background: var(--tn-border);
   outline: none;
   -webkit-appearance: none;
+  appearance: none;
 }
 
 .pb-range input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
+  appearance: none;
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -360,6 +362,7 @@ body {
   width: 44px;
   height: 24px;
   -webkit-appearance: none;
+  appearance: none;
   background: var(--tn-border);
   border-radius: 12px;
   position: relative;
