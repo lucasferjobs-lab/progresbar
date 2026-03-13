@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <title>ProgressBar - Admin</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
     <style>
         /* Animaciones y estados controlados por JS */
         .pb-view { display: none; }
@@ -13,10 +13,15 @@
         .tab-panel { display: none; }
         .tab-panel.active { display: block; animation: fadeIn 0.2s ease-out; }
         
-        .pb-nav__btn.is-active { background-color: #F1F5F9; color: #0070E0; font-weight: 600; }
-        .tab-btn.active { background-color: white; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .pb-nav__btn.is-active { background-color: #F3F4F6; color: #0070E0; font-weight: 600; }
+        .tab-btn.active { background-color: white; color: #111827; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         
         .hidden { display: none !important; }
+        
+        /* Colores personalizados Tiendanube */
+        .bg-tn-blue { background-color: #0070E0; }
+        .hover\:bg-tn-blue-dark:hover { background-color: #005bb8; }
+        .text-tn-blue { color: #0070E0; }
         
         /* Toast Styles */
         .pb-toast { position: fixed; bottom: -100px; right: 24px; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; font-weight: 500; transition: all 0.3s ease; opacity: 0; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); z-index: 50; }
@@ -29,40 +34,43 @@
         }
 
         /* Utilidad para inputs */
-        .input-base { width: 100%; border-radius: 0.375rem; border: 1px solid #E2E8F0; background-color: white; padding: 0.5rem 0.75rem; font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
+        .input-base { width: 100%; border-radius: 0.375rem; border: 1px solid #E5E7EB; background-color: white; padding: 0.5rem 0.75rem; font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
         .input-base:focus { border-color: #0070E0; box-shadow: 0 0 0 2px rgba(0, 112, 224, 0.1); }
-        .label-base { display: block; font-size: 0.875rem; font-weight: 500; color: #334155; margin-bottom: 0.25rem; }
-        .toggle-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; font-weight: 500; color: #334155; cursor: pointer; }
-        .toggle-checkbox { width: 1.1rem; height: 1.1rem; accent-color: #0070E0; cursor: pointer; border-radius: 4px; }
+        .label-base { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem; }
+        .toggle-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; font-weight: 500; color: #374151; cursor: pointer; }
+        
+        /* Estilos nativos para checkbox y sliders */
+        input[type="checkbox"] { width: 1.1rem; height: 1.1rem; cursor: pointer; border-radius: 4px; }
+        input[type="range"] { flex: 1; cursor: pointer; }
     </style>
 </head>
-<body class="bg-[#F8FAFC] text-slate-800 antialiased min-h-screen flex flex-col font-sans">
+<body class="bg-gray-50 text-gray-800 antialiased min-h-screen flex flex-col font-sans">
     
-    <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
+    <header class="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
         <div class="flex items-center gap-3">
             <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-inner">
                 P
             </div>
             <div>
-                <div class="font-bold text-lg leading-tight text-slate-900">ProgressBar</div>
-                <div class="text-xs text-slate-500 font-medium">CRO para aumentar el ticket promedio</div>
+                <div class="font-bold text-lg leading-tight text-gray-900">ProgressBar</div>
+                <div class="text-xs text-gray-500 font-medium">CRO para aumentar el ticket promedio</div>
             </div>
         </div>
         <div class="flex items-center gap-4 text-sm font-medium">
-            <div class="bg-slate-100 px-3 py-1 rounded-full text-slate-600 border border-slate-200">
-                Store <code id="storeLabel" class="text-blue-600 font-bold">...</code>
+            <div class="bg-gray-100 px-3 py-1 rounded-full text-gray-600 border border-gray-200">
+                Store <code id="storeLabel" class="text-tn-blue font-bold">...</code>
             </div>
         </div>
     </header>
 
     <div class="flex-1 max-w-7xl w-full mx-auto flex flex-col md:flex-row gap-8 px-4 py-8">
         
-        <aside class="w-full md:w-64 shrink-0">
+        <aside class="w-full md:w-64 flex-shrink-0">
             <nav class="flex flex-col gap-1 sticky top-24" aria-label="Secciones">
-                <button type="button" class="pb-nav__btn is-active text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="settings">Configuración</button>
-                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="billing">Facturación</button>
-                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="contact">Contacto</button>
-                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="faq">Preguntas frecuentes</button>
+                <button type="button" class="pb-nav__btn is-active text-left px-4 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors" data-pb-nav="1" data-pb-view="settings">Configuración</button>
+                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors" data-pb-nav="1" data-pb-view="billing">Facturación</button>
+                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors" data-pb-nav="1" data-pb-view="contact">Contacto</button>
+                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors" data-pb-nav="1" data-pb-view="faq">Preguntas frecuentes</button>
             </nav>
         </aside>
 
@@ -70,8 +78,8 @@
             
             <section class="pb-view is-active" id="viewSettings" data-pb-view-panel="settings">
                 <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Configuración de Barras</h1>
-                    <p class="text-slate-500 mt-1">Configura objetivos de carrito para impulsar conversión y ticket promedio.</p>
+                    <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Configuración de Barras</h1>
+                    <p class="text-gray-500 mt-1">Configura objetivos de carrito para impulsar conversión y ticket promedio.</p>
                 </div>
 
                 <div id="nexoError" class="bg-red-50 text-red-600 border border-red-200 p-4 rounded-lg mb-6 text-sm font-medium shadow-sm" style="display:none;"></div>
@@ -79,20 +87,20 @@
                 <form id="settingsForm" action="/admin/save" method="POST" class="space-y-6">
                     <input type="hidden" name="store_id" id="storeId" value="" />
 
-                    <div class="bg-slate-100 p-1 rounded-lg inline-flex w-full md:w-auto overflow-x-auto">
-                        <button type="button" class="tab-btn active flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-envio">Envío gratis</button>
-                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-cuotas">Cuotas</button>
-                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-regalo">Regalo</button>
-                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-style">Diseño y UI</button>
+                    <div class="bg-gray-200 p-1 rounded-lg inline-flex w-full md:w-auto overflow-x-auto">
+                        <button type="button" class="tab-btn active flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-gray-600 transition-all" data-tab-target="tab-envio">Envío gratis</button>
+                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-gray-600 transition-all" data-tab-target="tab-cuotas">Cuotas</button>
+                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-gray-600 transition-all" data-tab-target="tab-regalo">Regalo</button>
+                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-gray-600 transition-all" data-tab-target="tab-style">Diseño y UI</button>
                     </div>
 
-                    <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                    <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                         
                         <div id="tab-envio" class="tab-panel active p-6 md:p-8">
-                            <div class="border-b border-slate-100 pb-6 mb-6">
-                                <label class="toggle-label items-center bg-slate-50 border border-slate-200 p-4 rounded-lg">
-                                    <input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" class="toggle-checkbox" />
-                                    <span class="text-base font-bold text-slate-800">Activar Meta de Envío Gratis</span>
+                            <div class="border-b border-gray-100 pb-6 mb-6">
+                                <label class="toggle-label bg-gray-50 border border-gray-200 p-4 rounded-lg">
+                                    <input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" />
+                                    <span class="text-base font-bold text-gray-800">Activar Meta de Envío Gratis</span>
                                 </label>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -131,18 +139,18 @@
                                 <div>
                                     <label class="label-base" for="envio_bar_color">Color de barra de progreso</label>
                                     <div class="flex items-center gap-3">
-                                        <input class="h-10 w-16 p-1 rounded border border-slate-200 cursor-pointer" id="envio_bar_color" type="color" name="envio_bar_color" value="#008C99" />
-                                        <span class="text-xs text-slate-500 font-mono" id="envio_color_hex">#008C99</span>
+                                        <input class="h-10 w-16 p-1 rounded border border-gray-200 cursor-pointer" id="envio_bar_color" type="color" name="envio_bar_color" value="#008C99" />
+                                        <span class="text-xs text-gray-500 font-mono" id="envio_color_hex">#008C99</span>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
                         <div id="tab-cuotas" class="tab-panel p-6 md:p-8">
-                            <div class="border-b border-slate-100 pb-6 mb-6">
-                                <label class="toggle-label items-center bg-slate-50 border border-slate-200 p-4 rounded-lg">
-                                    <input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" class="toggle-checkbox" />
-                                    <span class="text-base font-bold text-slate-800">Activar Meta de Cuotas sin Interés</span>
+                            <div class="border-b border-gray-100 pb-6 mb-6">
+                                <label class="toggle-label bg-gray-50 border border-gray-200 p-4 rounded-lg">
+                                    <input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" />
+                                    <span class="text-base font-bold text-gray-800">Activar Meta de Cuotas sin Interés</span>
                                 </label>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -181,17 +189,17 @@
                                 <div>
                                     <label class="label-base" for="cuotas_bar_color">Color de barra de progreso</label>
                                     <div class="flex items-center gap-3">
-                                        <input class="h-10 w-16 p-1 rounded border border-slate-200 cursor-pointer" id="cuotas_bar_color" type="color" name="cuotas_bar_color" value="#FBB03B" />
+                                        <input class="h-10 w-16 p-1 rounded border border-gray-200 cursor-pointer" id="cuotas_bar_color" type="color" name="cuotas_bar_color" value="#FBB03B" />
                                     </div>
                                 </div>
                             </div>
                         </div>
 
                         <div id="tab-regalo" class="tab-panel p-6 md:p-8">
-                            <div class="border-b border-slate-100 pb-6 mb-6">
-                                <label class="toggle-label items-center bg-slate-50 border border-slate-200 p-4 rounded-lg">
-                                    <input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" class="toggle-checkbox" />
-                                    <span class="text-base font-bold text-slate-800">Activar Meta de Producto de Regalo</span>
+                            <div class="border-b border-gray-100 pb-6 mb-6">
+                                <label class="toggle-label bg-gray-50 border border-gray-200 p-4 rounded-lg">
+                                    <input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" />
+                                    <span class="text-base font-bold text-gray-800">Activar Meta de Producto de Regalo</span>
                                 </label>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -208,8 +216,8 @@
                                 </div>
                             </div>
 
-                            <div id="regalo_combo_fields" class="mt-6 p-4 bg-slate-50 border border-slate-100 rounded-lg">
-                                <h4 class="text-sm font-bold text-slate-700 mb-4">Condición de Combo</h4>
+                            <div id="regalo_combo_fields" class="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                                <h4 class="text-sm font-bold text-gray-700 mb-4">Condición de Combo</h4>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div>
                                         <label class="label-base" for="regalo_primary_product_id">Producto requerido 1</label>
@@ -222,8 +230,8 @@
                                 </div>
                             </div>
 
-                            <div id="regalo_target_fields" class="hidden mt-6 p-4 bg-slate-50 border border-slate-100 rounded-lg">
-                                <h4 class="text-sm font-bold text-slate-700 mb-4">Condición por Cantidad</h4>
+                            <div id="regalo_target_fields" class="hidden mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                                <h4 class="text-sm font-bold text-gray-700 mb-4">Condición por Cantidad</h4>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div>
                                         <label class="label-base" for="regalo_target_type">Aplica a</label>
@@ -247,7 +255,7 @@
                                 </div>
                             </div>
 
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 border-t border-slate-100 pt-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 border-t border-gray-100 pt-6">
                                 <div>
                                     <label class="label-base text-blue-600 font-bold" for="regalo_gift_product_id">🎁 Producto de Regalo a entregar</label>
                                     <select class="input-base" id="regalo_gift_product_id" name="regalo_gift_product_id"><option value="">Cargando...</option></select>
@@ -255,7 +263,7 @@
                                 <div>
                                     <label class="label-base" for="regalo_bar_color">Color de barra</label>
                                     <div class="flex items-center gap-3">
-                                        <input class="h-10 w-16 p-1 rounded border border-slate-200 cursor-pointer" id="regalo_bar_color" type="color" name="regalo_bar_color" value="#77C3A7" />
+                                        <input class="h-10 w-16 p-1 rounded border border-gray-200 cursor-pointer" id="regalo_bar_color" type="color" name="regalo_bar_color" value="#77C3A7" />
                                     </div>
                                 </div>
                                 <div>
@@ -274,23 +282,23 @@
                         </div>
 
                         <div id="tab-style" class="tab-panel p-6 md:p-8">
-                            <h3 class="text-lg font-bold text-slate-800 mb-6 border-b border-slate-100 pb-2">Estética General</h3>
+                            <h3 class="text-lg font-bold text-gray-800 mb-6 border-b border-gray-100 pb-2">Estética General</h3>
                             <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
                                 <div>
                                     <label class="label-base" for="ui_bg_color">Fondo Tarjeta</label>
-                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_bg_color" type="color" name="ui_bg_color" value="#F2F4F7" />
+                                    <input class="h-10 w-full p-1 rounded border border-gray-200 cursor-pointer" id="ui_bg_color" type="color" name="ui_bg_color" value="#F2F4F7" />
                                 </div>
                                 <div>
                                     <label class="label-base" for="ui_border_color">Bordes</label>
-                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_border_color" type="color" name="ui_border_color" value="#e5e7eb" />
+                                    <input class="h-10 w-full p-1 rounded border border-gray-200 cursor-pointer" id="ui_border_color" type="color" name="ui_border_color" value="#e5e7eb" />
                                 </div>
                                 <div>
                                     <label class="label-base" for="ui_track_color">Fondo Barra</label>
-                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_track_color" type="color" name="ui_track_color" value="#eef1f5" />
+                                    <input class="h-10 w-full p-1 rounded border border-gray-200 cursor-pointer" id="ui_track_color" type="color" name="ui_track_color" value="#eef1f5" />
                                 </div>
                                 <div>
                                     <label class="label-base" for="ui_text_color">Texto Principal</label>
-                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_text_color" type="color" name="ui_text_color" value="#333E4F" />
+                                    <input class="h-10 w-full p-1 rounded border border-gray-200 cursor-pointer" id="ui_text_color" type="color" name="ui_text_color" value="#333E4F" />
                                 </div>
                             </div>
 
@@ -298,7 +306,7 @@
                                 <div>
                                     <label class="label-base" for="ui_bar_height">Espesor de barra (px)</label>
                                     <div class="flex items-center gap-4">
-                                        <input class="flex-1 accent-blue-600" id="ui_bar_height_range" type="range" min="6" max="24" step="1" value="10" />
+                                        <input id="ui_bar_height_range" type="range" min="6" max="24" step="1" value="10" />
                                         <input class="input-base w-20 text-center" id="ui_bar_height" type="number" min="6" max="24" name="ui_bar_height" value="10" />
                                     </div>
                                 </div>
@@ -308,24 +316,24 @@
                                 </div>
                             </div>
 
-                            <h3 class="text-lg font-bold text-slate-800 mb-6 border-b border-slate-100 pb-2">Efectos e Íconos</h3>
+                            <h3 class="text-lg font-bold text-gray-800 mb-6 border-b border-gray-100 pb-2">Efectos e Íconos</h3>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-6">
-                                <label class="toggle-label"><input id="ui_shadow" type="checkbox" name="ui_shadow" value="1" checked class="toggle-checkbox"/> Sombras en tarjeta</label>
-                                <label class="toggle-label"><input id="ui_animation" type="checkbox" name="ui_animation" value="1" checked class="toggle-checkbox"/> Animación de llenado</label>
-                                <label class="toggle-label"><input id="ui_compact" type="checkbox" name="ui_compact" value="1" class="toggle-checkbox"/> Modo diseño compacto</label>
-                                <label class="toggle-label"><input id="ui_show_icons" type="checkbox" name="ui_show_icons" value="1" checked class="toggle-checkbox"/> Mostrar Iconos ilustrativos</label>
-                                <label class="toggle-label"><input id="ui_show_percent" type="checkbox" name="ui_show_percent" value="1" checked class="toggle-checkbox"/> Mostrar Número %</label>
-                                <label class="toggle-label"><input id="ui_percent_bump" type="checkbox" name="ui_percent_bump" value="1" checked class="toggle-checkbox"/> Animación "Bump" en %</label>
-                                <label class="toggle-label"><input id="ui_shimmer" type="checkbox" name="ui_shimmer" value="1" checked class="toggle-checkbox"/> Efecto Brillo (Shimmer)</label>
-                                <label class="toggle-label"><input id="ui_elastic" type="checkbox" name="ui_elastic" value="1" checked class="toggle-checkbox"/> Animación Elástica al llenar</label>
-                                <label class="toggle-label"><input id="ui_success_pulse" type="checkbox" name="ui_success_pulse" value="1" checked class="toggle-checkbox"/> Efecto Pulso al completar</label>
+                                <label class="toggle-label"><input id="ui_shadow" type="checkbox" name="ui_shadow" value="1" checked /> Sombras en tarjeta</label>
+                                <label class="toggle-label"><input id="ui_animation" type="checkbox" name="ui_animation" value="1" checked /> Animación de llenado</label>
+                                <label class="toggle-label"><input id="ui_compact" type="checkbox" name="ui_compact" value="1" /> Modo diseño compacto</label>
+                                <label class="toggle-label"><input id="ui_show_icons" type="checkbox" name="ui_show_icons" value="1" checked /> Mostrar Iconos ilustrativos</label>
+                                <label class="toggle-label"><input id="ui_show_percent" type="checkbox" name="ui_show_percent" value="1" checked /> Mostrar Número %</label>
+                                <label class="toggle-label"><input id="ui_percent_bump" type="checkbox" name="ui_percent_bump" value="1" checked /> Animación "Bump" en %</label>
+                                <label class="toggle-label"><input id="ui_shimmer" type="checkbox" name="ui_shimmer" value="1" checked /> Efecto Brillo (Shimmer)</label>
+                                <label class="toggle-label"><input id="ui_elastic" type="checkbox" name="ui_elastic" value="1" checked /> Animación Elástica al llenar</label>
+                                <label class="toggle-label"><input id="ui_success_pulse" type="checkbox" name="ui_success_pulse" value="1" checked /> Efecto Pulso al completar</label>
                             </div>
 
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                                 <div>
                                     <label class="label-base" for="ui_shimmer_opacity">Opacidad Brillo (0-60)</label>
                                     <div class="flex items-center gap-4">
-                                        <input class="flex-1 accent-blue-600" id="ui_shimmer_opacity_range" type="range" min="0" max="60" step="1" value="38" />
+                                        <input id="ui_shimmer_opacity_range" type="range" min="0" max="60" step="1" value="38" />
                                         <input class="input-base w-20 text-center" id="ui_shimmer_opacity" type="number" min="0" max="60" name="ui_shimmer_opacity" value="38" />
                                     </div>
                                 </div>
@@ -339,7 +347,7 @@
                     </div>
 
                     <div class="flex justify-end mt-8">
-                        <button id="saveBtn" class="bg-[#0070E0] hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed" type="submit">
+                        <button id="saveBtn" class="bg-tn-blue hover:bg-tn-blue-dark text-white px-8 py-3 rounded-lg font-bold shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed" type="submit">
                             Guardar Configuración
                         </button>
                     </div>
@@ -348,31 +356,31 @@
 
             <section class="pb-view" data-pb-view-panel="billing">
                 <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Facturación</h1>
-                    <p class="text-slate-500 mt-1">La facturación mensual se gestiona directamente desde Tiendanube.</p>
+                    <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Facturación</h1>
+                    <p class="text-gray-500 mt-1">La facturación mensual se gestiona directamente desde Tiendanube.</p>
                 </div>
                 
-                <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-6 md:p-8">
+                <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 md:p-8">
                     <div class="space-y-4 mb-8">
-                        <div class="flex justify-between items-center py-3 border-b border-slate-100">
-                            <span class="text-slate-600 font-medium">Estado de la cuenta</span>
+                        <div class="flex justify-between items-center py-3 border-b border-gray-100">
+                            <span class="text-gray-600 font-medium">Estado de la cuenta</span>
                             <span id="billingStatus" class="font-bold">...</span>
                         </div>
-                        <div class="flex justify-between items-center py-3 border-b border-slate-100 hidden" id="billingUntilWrap">
-                            <span class="text-slate-600 font-medium">Gratis hasta</span>
-                            <span id="billingUntil" class="font-bold text-slate-800">...</span>
+                        <div class="flex justify-between items-center py-3 border-b border-gray-100 hidden" id="billingUntilWrap">
+                            <span class="text-gray-600 font-medium">Gratis hasta</span>
+                            <span id="billingUntil" class="font-bold text-gray-800">...</span>
                         </div>
                         <div class="flex justify-between items-center py-3 hidden" id="billingCodeWrap">
-                            <span class="text-slate-600 font-medium">Cupón activo</span>
-                            <code id="billingCode" class="bg-slate-100 text-slate-800 px-3 py-1 rounded font-mono text-sm">...</code>
+                            <span class="text-gray-600 font-medium">Cupón activo</span>
+                            <code id="billingCode" class="bg-gray-100 text-gray-800 px-3 py-1 rounded font-mono text-sm">...</code>
                         </div>
                     </div>
 
-                    <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
-                        <h4 class="font-bold text-slate-800 mb-4">¿Tienes un código promocional?</h4>
+                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-6">
+                        <h4 class="font-bold text-gray-800 mb-4">¿Tienes un código promocional?</h4>
                         <div class="flex flex-col sm:flex-row gap-3">
                             <input id="couponCode" type="text" autocomplete="off" class="input-base flex-1" placeholder="Ingresa tu cupón" />
-                            <button type="button" class="bg-slate-800 hover:bg-slate-900 text-white px-6 py-2 rounded-lg font-medium transition-colors whitespace-nowrap" id="couponRedeemBtn">
+                            <button type="button" class="bg-gray-800 hover:bg-gray-900 text-white px-6 py-2 rounded-lg font-medium transition-colors whitespace-nowrap" id="couponRedeemBtn">
                                 Aplicar cupón
                             </button>
                         </div>
@@ -382,57 +390,53 @@
 
             <section class="pb-view" data-pb-view-panel="contact">
                 <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Soporte y Ayuda</h1>
-                    <p class="text-slate-500 mt-1">Estamos para ayudarte a optimizar la conversión de tu tienda.</p>
+                    <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Soporte y Ayuda</h1>
+                    <p class="text-gray-500 mt-1">Estamos para ayudarte a optimizar la conversión de tu tienda.</p>
                 </div>
 
-                <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-6 md:p-8 text-center">
+                <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 md:p-8 text-center">
                     <div class="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
                         💬
                     </div>
-                    <h3 class="text-lg font-bold text-slate-900 mb-2">FRANFER Soluciones</h3>
-                    <p class="text-slate-600 mb-8 max-w-md mx-auto">Escríbenos si tienes dudas de configuración, necesitas personalizaciones CSS en tu tienda, o asesoría sobre CRO.</p>
+                    <h3 class="text-lg font-bold text-gray-900 mb-2">FRANFER Soluciones</h3>
+                    <p class="text-gray-600 mb-8 max-w-md mx-auto">Escríbenos si tienes dudas de configuración, necesitas personalizaciones CSS en tu tienda, o asesoría sobre CRO.</p>
                     
                     <div class="flex justify-center gap-4">
-                        <button type="button" class="text-slate-600 border border-slate-300 hover:bg-slate-50 font-medium px-6 py-2 rounded-lg transition-colors" data-pb-jump="faq">Ver Preguntas Frecuentes</button>
-                        <a id="supportEmailBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2 rounded-lg transition-colors" href="#">Enviar un mensaje</a>
+                        <button type="button" class="text-gray-600 border border-gray-300 hover:bg-gray-50 font-medium px-6 py-2 rounded-lg transition-colors" data-pb-jump="faq">Ver Preguntas Frecuentes</button>
+                        <a id="supportEmailBtn" class="bg-tn-blue hover:bg-tn-blue-dark text-white font-medium px-6 py-2 rounded-lg transition-colors" href="#">Enviar un mensaje</a>
                     </div>
                 </div>
             </section>
 
             <section class="pb-view" data-pb-view-panel="faq">
                 <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Preguntas Frecuentes</h1>
+                    <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Preguntas Frecuentes</h1>
                 </div>
 
-                <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden divide-y divide-slate-100">
+                <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden divide-y divide-gray-100">
                     <details class="group p-6">
-                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-gray-800 list-none outline-none">
                             <span>¿Se pueden combinar envío, cuotas y regalo?</span>
-                            <span class="transition group-open:rotate-180">↓</span>
                         </summary>
-                        <p class="text-slate-600 mt-4 leading-relaxed">Sí. Puedes activar las tres reglas simultáneamente. El widget se encargará de mostrar una barra de progreso separada y elegante para cada beneficio activo, permitiendo al usuario ver todo lo que puede ganar sumando productos.</p>
+                        <p class="text-gray-600 mt-4 leading-relaxed">Sí. Puedes activar las tres reglas simultáneamente. El widget se encargará de mostrar una barra de progreso separada y elegante para cada beneficio activo, permitiendo al usuario ver todo lo que puede ganar sumando productos.</p>
                     </details>
                     <details class="group p-6">
-                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-gray-800 list-none outline-none">
                             <span>¿Cuándo se actualizan las barras?</span>
-                            <span class="transition group-open:rotate-180">↓</span>
                         </summary>
-                        <p class="text-slate-600 mt-4 leading-relaxed">Se sincronizan en tiempo real. Cada vez que el usuario agregue, elimine o modifique la cantidad de un artículo en el carrito, la barra recalculará los totales instantáneamente y reproducirá las animaciones correspondientes.</p>
+                        <p class="text-gray-600 mt-4 leading-relaxed">Se sincronizan en tiempo real. Cada vez que el usuario agregue, elimine o modifique la cantidad de un artículo en el carrito, la barra recalculará los totales instantáneamente y reproducirá las animaciones correspondientes.</p>
                     </details>
                     <details class="group p-6">
-                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-gray-800 list-none outline-none">
                             <span>¿Qué significa "Aplica a"?</span>
-                            <span class="transition group-open:rotate-180">↓</span>
                         </summary>
-                        <p class="text-slate-600 mt-4 leading-relaxed">Te permite restringir la promoción. Por ejemplo, si seleccionas "Aplica a: Categoría Zapatillas", la barra de Envío Gratis solo sumará el dinero gastado en zapatillas. Si el usuario compra remeras, ese dinero no sumará para la meta de envío.</p>
+                        <p class="text-gray-600 mt-4 leading-relaxed">Te permite restringir la promoción. Por ejemplo, si seleccionas "Aplica a: Categoría Zapatillas", la barra de Envío Gratis solo sumará el dinero gastado en zapatillas. Si el usuario compra remeras, ese dinero no sumará para la meta de envío.</p>
                     </details>
                     <details class="group p-6">
-                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-gray-800 list-none outline-none">
                             <span>Tips CRO para aumentar el ticket</span>
-                            <span class="transition group-open:rotate-180">↓</span>
                         </summary>
-                        <p class="text-slate-600 mt-4 leading-relaxed">Recomendamos fijar la meta de "Envío Gratis" entre un 15% y un 25% por encima del Ticket Promedio actual de tu tienda. Utiliza los colores de tu marca y asegúrate de que el texto sea breve (Ej: "Agrega $X más para Envío Gratis").</p>
+                        <p class="text-gray-600 mt-4 leading-relaxed">Recomendamos fijar la meta de "Envío Gratis" entre un 15% y un 25% por encima del Ticket Promedio actual de tu tienda. Utiliza los colores de tu marca y asegúrate de que el texto sea breve (Ej: "Agrega $X más para Envío Gratis").</p>
                     </details>
                 </div>
             </section>

@@ -1768,6 +1768,18 @@
       return fallback;
     }
 
+    // Función auxiliar para crear o recuperar el contenedor de la barra
+function ensureItemNode(id, parentNode, tag = 'div') {
+    if (!parentNode) return null;
+    let node = document.getElementById(id);
+    if (!node) {
+        node = document.createElement(tag);
+        node.id = id;
+        parentNode.appendChild(node);
+    }
+    return node;
+}
+
     function renderUiResults(wrapper, results) {
       const list = ensureListNode(wrapper);
       if (!list) return false;
