@@ -1,471 +1,443 @@
 <!doctype html>
 <html lang="es">
-  <head>
+<head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <title>ProgressBar - Admin</title>
-    <link rel="stylesheet" href="/static/admin/admin.css" />
-  </head>
-  <body>
-    <div class="pb-app">
-      <header class="pb-header">
-        <div class="pb-brand">
-          <div class="pb-mark" aria-hidden="true"></div>
-          <div class="pb-brand__txt">
-            <div class="pb-brand__name">ProgressBar</div>
-            <div class="pb-brand__tag">CRO para aumentar el ticket promedio</div>
-          </div>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Animaciones y estados controlados por JS */
+        .pb-view { display: none; }
+        .pb-view.is-active { display: block; animation: fadeIn 0.3s ease-out; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; animation: fadeIn 0.2s ease-out; }
+        
+        .pb-nav__btn.is-active { background-color: #F1F5F9; color: #0070E0; font-weight: 600; }
+        .tab-btn.active { background-color: white; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        
+        .hidden { display: none !important; }
+        
+        /* Toast Styles */
+        .pb-toast { position: fixed; bottom: -100px; right: 24px; background: #10B981; color: white; padding: 12px 24px; border-radius: 8px; font-weight: 500; transition: all 0.3s ease; opacity: 0; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); z-index: 50; }
+        .pb-toast.is-show { bottom: 24px; opacity: 1; }
+        .pb-toast.is-error { background: #EF4444; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Utilidad para inputs */
+        .input-base { width: 100%; border-radius: 0.375rem; border: 1px solid #E2E8F0; background-color: white; padding: 0.5rem 0.75rem; font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
+        .input-base:focus { border-color: #0070E0; box-shadow: 0 0 0 2px rgba(0, 112, 224, 0.1); }
+        .label-base { display: block; font-size: 0.875rem; font-weight: 500; color: #334155; margin-bottom: 0.25rem; }
+        .toggle-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; font-weight: 500; color: #334155; cursor: pointer; }
+        .toggle-checkbox { width: 1.1rem; height: 1.1rem; accent-color: #0070E0; cursor: pointer; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-[#F8FAFC] text-slate-800 antialiased min-h-screen flex flex-col font-sans">
+    
+    <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-inner">
+                P
+            </div>
+            <div>
+                <div class="font-bold text-lg leading-tight text-slate-900">ProgressBar</div>
+                <div class="text-xs text-slate-500 font-medium">CRO para aumentar el ticket promedio</div>
+            </div>
         </div>
-
-        <div class="pb-header__meta">
-          <div class="pb-chip">Store <code id="storeLabel">...</code></div>
-          <div class="pb-sign">FRANFER Soluciones</div>
+        <div class="flex items-center gap-4 text-sm font-medium">
+            <div class="bg-slate-100 px-3 py-1 rounded-full text-slate-600 border border-slate-200">
+                Store <code id="storeLabel" class="text-blue-600 font-bold">...</code>
+            </div>
         </div>
-      </header>
+    </header>
 
-      <div class="pb-shell">
-        <nav class="pb-nav" aria-label="Secciones">
-          <button type="button" class="pb-nav__btn is-active" data-pb-nav="1" data-pb-view="settings">Configuración</button>
-          <button type="button" class="pb-nav__btn" data-pb-nav="1" data-pb-view="billing">Facturación</button>
-          <button type="button" class="pb-nav__btn" data-pb-nav="1" data-pb-view="contact">Contacto</button>
-          <button type="button" class="pb-nav__btn" data-pb-nav="1" data-pb-view="faq">Preguntas frecuentes</button>
-        </nav>
+    <div class="flex-1 max-w-7xl w-full mx-auto flex flex-col md:flex-row gap-8 px-4 py-8">
+        
+        <aside class="w-full md:w-64 shrink-0">
+            <nav class="flex flex-col gap-1 sticky top-24" aria-label="Secciones">
+                <button type="button" class="pb-nav__btn is-active text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="settings">Configuración</button>
+                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="billing">Facturación</button>
+                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="contact">Contacto</button>
+                <button type="button" class="pb-nav__btn text-left px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors" data-pb-nav="1" data-pb-view="faq">Preguntas frecuentes</button>
+            </nav>
+        </aside>
 
-        <main class="pb-main">
-          <section class="pb-view is-active" id="viewSettings" data-pb-view-panel="settings">
-            <div class="pb-card">
-              <div class="pb-card__head">
-                <div>
-                  <h1>Configuración</h1>
-                  <p class="pb-muted">Configura objetivos de carrito para impulsar conversión y ticket promedio.</p>
-                </div>
-              </div>
-
-              <div id="nexoError" class="pb-alert" style="display:none;"></div>
-
-              <form id="settingsForm" action="/admin/save" method="POST">
-                <input type="hidden" name="store_id" id="storeId" value="" />
-
-                <div class="pb-tabs">
-                  <button type="button" class="tab-btn" data-tab-target="tab-style">Diseño</button>
-                  <button type="button" class="tab-btn active" data-tab-target="tab-envio">Envío gratis</button>
-                  <button type="button" class="tab-btn" data-tab-target="tab-cuotas">Cuotas</button>
-                  <button type="button" class="tab-btn" data-tab-target="tab-regalo">Regalo</button>
+        <main class="flex-1 pb-12">
+            
+            <section class="pb-view is-active" id="viewSettings" data-pb-view-panel="settings">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Configuración de Barras</h1>
+                    <p class="text-slate-500 mt-1">Configura objetivos de carrito para impulsar conversión y ticket promedio.</p>
                 </div>
 
-                <div id="tab-style" class="tab-panel">
-                  <div class="pb-grid">
-                    <div class="pb-field">
-                      <label for="ui_bg_color">Fondo</label>
-                      <input id="ui_bg_color" type="color" name="ui_bg_color" value="#F2F4F7" />
+                <div id="nexoError" class="bg-red-50 text-red-600 border border-red-200 p-4 rounded-lg mb-6 text-sm font-medium shadow-sm" style="display:none;"></div>
+
+                <form id="settingsForm" action="/admin/save" method="POST" class="space-y-6">
+                    <input type="hidden" name="store_id" id="storeId" value="" />
+
+                    <div class="bg-slate-100 p-1 rounded-lg inline-flex w-full md:w-auto overflow-x-auto">
+                        <button type="button" class="tab-btn active flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-envio">Envío gratis</button>
+                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-cuotas">Cuotas</button>
+                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-regalo">Regalo</button>
+                        <button type="button" class="tab-btn flex-1 md:flex-none px-5 py-1.5 rounded-md text-sm font-medium text-slate-600 transition-all" data-tab-target="tab-style">Diseño y UI</button>
                     </div>
 
-                    <div class="pb-field">
-                      <label for="ui_border_color">Borde</label>
-                      <input id="ui_border_color" type="color" name="ui_border_color" value="#e5e7eb" />
+                    <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                        
+                        <div id="tab-envio" class="tab-panel active p-6 md:p-8">
+                            <div class="border-b border-slate-100 pb-6 mb-6">
+                                <label class="toggle-label items-center bg-slate-50 border border-slate-200 p-4 rounded-lg">
+                                    <input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" class="toggle-checkbox" />
+                                    <span class="text-base font-bold text-slate-800">Activar Meta de Envío Gratis</span>
+                                </label>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="label-base" for="envio_min_amount">Monto mínimo a alcanzar ($)</label>
+                                    <input class="input-base" id="envio_min_amount" type="number" min="0" name="envio_min_amount" value="0" placeholder="Ej: 50000" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="envio_scope">Aplica a</label>
+                                    <select class="input-base" id="envio_scope" name="envio_scope">
+                                        <option value="all">Todo el carrito</option>
+                                        <option value="product">Producto Específico</option>
+                                        <option value="category">Categoría Específica</option>
+                                    </select>
+                                </div>
+                                <div id="envio_product_wrap" class="hidden">
+                                    <label class="label-base" for="envio_product_id">Seleccionar Producto</label>
+                                    <select class="input-base" id="envio_product_id" name="envio_product_id"><option value="">Cargando...</option></select>
+                                </div>
+                                <div id="envio_category_wrap" class="hidden">
+                                    <label class="label-base" for="envio_category_id">Seleccionar Categoría</label>
+                                    <select class="input-base" id="envio_category_id" name="envio_category_id"><option value="">Cargando...</option></select>
+                                </div>
+                                <div>
+                                    <label class="label-base" for="envio_text_prefix">Texto inicial (antes de monto)</label>
+                                    <input class="input-base" id="envio_text_prefix" type="text" name="envio_text_prefix" placeholder="Ej: Te faltan" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="envio_text_suffix">Texto final (después de monto)</label>
+                                    <input class="input-base" id="envio_text_suffix" type="text" name="envio_text_suffix" placeholder="Ej: para Envío Gratis" />
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="label-base" for="envio_text_reached">Texto de éxito (al alcanzar meta)</label>
+                                    <input class="input-base" id="envio_text_reached" type="text" name="envio_text_reached" placeholder="Ej: ¡Felicidades! Tienes Envío Gratis" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="envio_bar_color">Color de barra de progreso</label>
+                                    <div class="flex items-center gap-3">
+                                        <input class="h-10 w-16 p-1 rounded border border-slate-200 cursor-pointer" id="envio_bar_color" type="color" name="envio_bar_color" value="#008C99" />
+                                        <span class="text-xs text-slate-500 font-mono" id="envio_color_hex">#008C99</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="tab-cuotas" class="tab-panel p-6 md:p-8">
+                            <div class="border-b border-slate-100 pb-6 mb-6">
+                                <label class="toggle-label items-center bg-slate-50 border border-slate-200 p-4 rounded-lg">
+                                    <input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" class="toggle-checkbox" />
+                                    <span class="text-base font-bold text-slate-800">Activar Meta de Cuotas sin Interés</span>
+                                </label>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="label-base" for="cuotas_threshold_amount">Monto mínimo a alcanzar ($)</label>
+                                    <input class="input-base" id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" value="0" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="cuotas_scope">Aplica a</label>
+                                    <select class="input-base" id="cuotas_scope" name="cuotas_scope">
+                                        <option value="all">Todo el carrito</option>
+                                        <option value="product">Producto</option>
+                                        <option value="category">Categoría</option>
+                                    </select>
+                                </div>
+                                <div id="cuotas_product_wrap" class="hidden">
+                                    <label class="label-base" for="cuotas_product_id">Seleccionar Producto</label>
+                                    <select class="input-base" id="cuotas_product_id" name="cuotas_product_id"><option value="">Cargando...</option></select>
+                                </div>
+                                <div id="cuotas_category_wrap" class="hidden">
+                                    <label class="label-base" for="cuotas_category_id">Seleccionar Categoría</label>
+                                    <select class="input-base" id="cuotas_category_id" name="cuotas_category_id"><option value="">Cargando...</option></select>
+                                </div>
+                                <div>
+                                    <label class="label-base" for="cuotas_text_prefix">Texto inicial</label>
+                                    <input class="input-base" id="cuotas_text_prefix" type="text" name="cuotas_text_prefix" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="cuotas_text_suffix">Texto final</label>
+                                    <input class="input-base" id="cuotas_text_suffix" type="text" name="cuotas_text_suffix" />
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="label-base" for="cuotas_text_reached">Texto de éxito</label>
+                                    <input class="input-base" id="cuotas_text_reached" type="text" name="cuotas_text_reached" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="cuotas_bar_color">Color de barra de progreso</label>
+                                    <div class="flex items-center gap-3">
+                                        <input class="h-10 w-16 p-1 rounded border border-slate-200 cursor-pointer" id="cuotas_bar_color" type="color" name="cuotas_bar_color" value="#FBB03B" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="tab-regalo" class="tab-panel p-6 md:p-8">
+                            <div class="border-b border-slate-100 pb-6 mb-6">
+                                <label class="toggle-label items-center bg-slate-50 border border-slate-200 p-4 rounded-lg">
+                                    <input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" class="toggle-checkbox" />
+                                    <span class="text-base font-bold text-slate-800">Activar Meta de Producto de Regalo</span>
+                                </label>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="label-base" for="regalo_mode">Tipo de Regla</label>
+                                    <select class="input-base" id="regalo_mode" name="regalo_mode">
+                                        <option value="combo_products">Combo de productos</option>
+                                        <option value="target_rule">Regla por cantidad</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="label-base" for="regalo_min_amount">Monto mínimo en dinero ($)</label>
+                                    <input class="input-base" id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" value="0" />
+                                </div>
+                            </div>
+
+                            <div id="regalo_combo_fields" class="mt-6 p-4 bg-slate-50 border border-slate-100 rounded-lg">
+                                <h4 class="text-sm font-bold text-slate-700 mb-4">Condición de Combo</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label class="label-base" for="regalo_primary_product_id">Producto requerido 1</label>
+                                        <select class="input-base" id="regalo_primary_product_id" name="regalo_primary_product_id"><option value="">Cargando...</option></select>
+                                    </div>
+                                    <div>
+                                        <label class="label-base" for="regalo_secondary_product_id">Producto requerido 2</label>
+                                        <select class="input-base" id="regalo_secondary_product_id" name="regalo_secondary_product_id"><option value="">Cargando...</option></select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="regalo_target_fields" class="hidden mt-6 p-4 bg-slate-50 border border-slate-100 rounded-lg">
+                                <h4 class="text-sm font-bold text-slate-700 mb-4">Condición por Cantidad</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label class="label-base" for="regalo_target_type">Aplica a</label>
+                                        <select class="input-base" id="regalo_target_type" name="regalo_target_type">
+                                            <option value="same_product_qty">Cantidad de producto específico</option>
+                                            <option value="category_qty">Cantidad en categoría específica</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="label-base" for="regalo_target_qty">Cantidad objetivo (ej: llevar 3)</label>
+                                        <input class="input-base" id="regalo_target_qty" type="number" min="0" name="regalo_target_qty" value="0" />
+                                    </div>
+                                    <div id="regalo_target_product_wrap">
+                                        <label class="label-base" for="regalo_target_product_id">Producto a evaluar</label>
+                                        <select class="input-base" id="regalo_target_product_id" name="regalo_target_product_id"><option value="">Cargando...</option></select>
+                                    </div>
+                                    <div id="regalo_target_category_wrap" class="hidden">
+                                        <label class="label-base" for="regalo_target_category_id">Categoría a evaluar</label>
+                                        <select class="input-base" id="regalo_target_category_id" name="regalo_target_category_id"><option value="">Cargando...</option></select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 border-t border-slate-100 pt-6">
+                                <div>
+                                    <label class="label-base text-blue-600 font-bold" for="regalo_gift_product_id">🎁 Producto de Regalo a entregar</label>
+                                    <select class="input-base" id="regalo_gift_product_id" name="regalo_gift_product_id"><option value="">Cargando...</option></select>
+                                </div>
+                                <div>
+                                    <label class="label-base" for="regalo_bar_color">Color de barra</label>
+                                    <div class="flex items-center gap-3">
+                                        <input class="h-10 w-16 p-1 rounded border border-slate-200 cursor-pointer" id="regalo_bar_color" type="color" name="regalo_bar_color" value="#77C3A7" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="label-base" for="regalo_text_prefix">Texto inicial</label>
+                                    <input class="input-base" id="regalo_text_prefix" type="text" name="regalo_text_prefix" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="regalo_text_suffix">Texto final</label>
+                                    <input class="input-base" id="regalo_text_suffix" type="text" name="regalo_text_suffix" />
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="label-base" for="regalo_text_reached">Texto de éxito</label>
+                                    <input class="input-base" id="regalo_text_reached" type="text" name="regalo_text_reached" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="tab-style" class="tab-panel p-6 md:p-8">
+                            <h3 class="text-lg font-bold text-slate-800 mb-6 border-b border-slate-100 pb-2">Estética General</h3>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                                <div>
+                                    <label class="label-base" for="ui_bg_color">Fondo Tarjeta</label>
+                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_bg_color" type="color" name="ui_bg_color" value="#F2F4F7" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="ui_border_color">Bordes</label>
+                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_border_color" type="color" name="ui_border_color" value="#e5e7eb" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="ui_track_color">Fondo Barra</label>
+                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_track_color" type="color" name="ui_track_color" value="#eef1f5" />
+                                </div>
+                                <div>
+                                    <label class="label-base" for="ui_text_color">Texto Principal</label>
+                                    <input class="h-10 w-full p-1 rounded border border-slate-200 cursor-pointer" id="ui_text_color" type="color" name="ui_text_color" value="#333E4F" />
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                                <div>
+                                    <label class="label-base" for="ui_bar_height">Espesor de barra (px)</label>
+                                    <div class="flex items-center gap-4">
+                                        <input class="flex-1 accent-blue-600" id="ui_bar_height_range" type="range" min="6" max="24" step="1" value="10" />
+                                        <input class="input-base w-20 text-center" id="ui_bar_height" type="number" min="6" max="24" name="ui_bar_height" value="10" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="label-base" for="ui_radius">Radio bordes (px)</label>
+                                    <input class="input-base" id="ui_radius" type="number" min="0" max="40" name="ui_radius" value="30" />
+                                </div>
+                            </div>
+
+                            <h3 class="text-lg font-bold text-slate-800 mb-6 border-b border-slate-100 pb-2">Efectos e Íconos</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-6">
+                                <label class="toggle-label"><input id="ui_shadow" type="checkbox" name="ui_shadow" value="1" checked class="toggle-checkbox"/> Sombras en tarjeta</label>
+                                <label class="toggle-label"><input id="ui_animation" type="checkbox" name="ui_animation" value="1" checked class="toggle-checkbox"/> Animación de llenado</label>
+                                <label class="toggle-label"><input id="ui_compact" type="checkbox" name="ui_compact" value="1" class="toggle-checkbox"/> Modo diseño compacto</label>
+                                <label class="toggle-label"><input id="ui_show_icons" type="checkbox" name="ui_show_icons" value="1" checked class="toggle-checkbox"/> Mostrar Iconos ilustrativos</label>
+                                <label class="toggle-label"><input id="ui_show_percent" type="checkbox" name="ui_show_percent" value="1" checked class="toggle-checkbox"/> Mostrar Número %</label>
+                                <label class="toggle-label"><input id="ui_percent_bump" type="checkbox" name="ui_percent_bump" value="1" checked class="toggle-checkbox"/> Animación "Bump" en %</label>
+                                <label class="toggle-label"><input id="ui_shimmer" type="checkbox" name="ui_shimmer" value="1" checked class="toggle-checkbox"/> Efecto Brillo (Shimmer)</label>
+                                <label class="toggle-label"><input id="ui_elastic" type="checkbox" name="ui_elastic" value="1" checked class="toggle-checkbox"/> Animación Elástica al llenar</label>
+                                <label class="toggle-label"><input id="ui_success_pulse" type="checkbox" name="ui_success_pulse" value="1" checked class="toggle-checkbox"/> Efecto Pulso al completar</label>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                                <div>
+                                    <label class="label-base" for="ui_shimmer_opacity">Opacidad Brillo (0-60)</label>
+                                    <div class="flex items-center gap-4">
+                                        <input class="flex-1 accent-blue-600" id="ui_shimmer_opacity_range" type="range" min="0" max="60" step="1" value="38" />
+                                        <input class="input-base w-20 text-center" id="ui_shimmer_opacity" type="number" min="0" max="60" name="ui_shimmer_opacity" value="38" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="label-base" for="ui_shimmer_speed">Velocidad Brillo (ms)</label>
+                                    <input class="input-base" id="ui_shimmer_speed" type="number" min="900" max="6000" name="ui_shimmer_speed" value="2000" />
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
 
-                    <div class="pb-field">
-                      <label for="ui_track_color">Track</label>
-                      <input id="ui_track_color" type="color" name="ui_track_color" value="#eef1f5" />
+                    <div class="flex justify-end mt-8">
+                        <button id="saveBtn" class="bg-[#0070E0] hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed" type="submit">
+                            Guardar Configuración
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="pb-view" data-pb-view-panel="billing">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Facturación</h1>
+                    <p class="text-slate-500 mt-1">La facturación mensual se gestiona directamente desde Tiendanube.</p>
+                </div>
+                
+                <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-6 md:p-8">
+                    <div class="space-y-4 mb-8">
+                        <div class="flex justify-between items-center py-3 border-b border-slate-100">
+                            <span class="text-slate-600 font-medium">Estado de la cuenta</span>
+                            <span id="billingStatus" class="font-bold">...</span>
+                        </div>
+                        <div class="flex justify-between items-center py-3 border-b border-slate-100 hidden" id="billingUntilWrap">
+                            <span class="text-slate-600 font-medium">Gratis hasta</span>
+                            <span id="billingUntil" class="font-bold text-slate-800">...</span>
+                        </div>
+                        <div class="flex justify-between items-center py-3 hidden" id="billingCodeWrap">
+                            <span class="text-slate-600 font-medium">Cupón activo</span>
+                            <code id="billingCode" class="bg-slate-100 text-slate-800 px-3 py-1 rounded font-mono text-sm">...</code>
+                        </div>
                     </div>
 
-                    <div class="pb-field">
-                      <label for="ui_text_color">Texto</label>
-                      <input id="ui_text_color" type="color" name="ui_text_color" value="#333E4F" />
+                    <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+                        <h4 class="font-bold text-slate-800 mb-4">¿Tienes un código promocional?</h4>
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <input id="couponCode" type="text" autocomplete="off" class="input-base flex-1" placeholder="Ingresa tu cupón" />
+                            <button type="button" class="bg-slate-800 hover:bg-slate-900 text-white px-6 py-2 rounded-lg font-medium transition-colors whitespace-nowrap" id="couponRedeemBtn">
+                                Aplicar cupón
+                            </button>
+                        </div>
                     </div>
+                </div>
+            </section>
 
-                    <div class="pb-field">
-                      <label for="ui_bar_height">Espesor (px)</label>
-                      <div class="pb-range">
-                        <input id="ui_bar_height_range" type="range" min="6" max="24" step="1" value="10" aria-label="Espesor" />
-                        <input id="ui_bar_height" type="number" min="6" max="24" name="ui_bar_height" value="10" />
-                      </div>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="ui_radius">Radio (px)</label>
-                      <input id="ui_radius" type="number" min="0" max="40" name="ui_radius" value="30" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_shadow" type="checkbox" name="ui_shadow" value="1" checked />
-                        <span>Sombra</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_animation" type="checkbox" name="ui_animation" value="1" checked />
-                        <span>Animación</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field" style="grid-column: 1 / -1;">
-                      <label class="pb-toggle">
-                        <input id="ui_compact" type="checkbox" name="ui_compact" value="1" />
-                        <span>Modo compacto</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field" style="grid-column: 1 / -1; margin-top: 6px;">
-                      <div class="pb-muted">Iconos y efectos</div>
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_show_icons" type="checkbox" name="ui_show_icons" value="1" checked />
-                        <span>Iconos</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_show_percent" type="checkbox" name="ui_show_percent" value="1" checked />
-                        <span>Porcentaje</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_percent_bump" type="checkbox" name="ui_percent_bump" value="1" checked />
-                        <span>Animar porcentaje</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_shimmer" type="checkbox" name="ui_shimmer" value="1" checked />
-                        <span>Shimmer</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="ui_shimmer_opacity">Intensidad shimmer</label>
-                      <div class="pb-range">
-                        <input id="ui_shimmer_opacity_range" type="range" min="0" max="60" step="1" value="38" aria-label="Intensidad shimmer" />
-                        <input id="ui_shimmer_opacity" type="number" min="0" max="60" name="ui_shimmer_opacity" value="38" />
-                      </div>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="ui_shimmer_speed">Velocidad shimmer (ms)</label>
-                      <input id="ui_shimmer_speed" type="number" min="900" max="6000" name="ui_shimmer_speed" value="2000" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_elastic" type="checkbox" name="ui_elastic" value="1" checked />
-                        <span>Elasticidad</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label class="pb-toggle">
-                        <input id="ui_success_pulse" type="checkbox" name="ui_success_pulse" value="1" checked />
-                        <span>Pulso al completar</span>
-                      </label>
-                    </div>
-                  </div>
+            <section class="pb-view" data-pb-view-panel="contact">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Soporte y Ayuda</h1>
+                    <p class="text-slate-500 mt-1">Estamos para ayudarte a optimizar la conversión de tu tienda.</p>
                 </div>
 
-                <div id="tab-envio" class="tab-panel active">
-                  <div class="pb-grid">
-                    <div class="pb-field" style="grid-column: 1 / -1;">
-                      <label class="pb-toggle">
-                        <input id="enable_envio_rule" type="checkbox" name="enable_envio_rule" value="1" />
-                        <span>Activar</span>
-                      </label>
+                <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-6 md:p-8 text-center">
+                    <div class="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
+                        💬
                     </div>
+                    <h3 class="text-lg font-bold text-slate-900 mb-2">FRANFER Soluciones</h3>
+                    <p class="text-slate-600 mb-8 max-w-md mx-auto">Escríbenos si tienes dudas de configuración, necesitas personalizaciones CSS en tu tienda, o asesoría sobre CRO.</p>
+                    
+                    <div class="flex justify-center gap-4">
+                        <button type="button" class="text-slate-600 border border-slate-300 hover:bg-slate-50 font-medium px-6 py-2 rounded-lg transition-colors" data-pb-jump="faq">Ver Preguntas Frecuentes</button>
+                        <a id="supportEmailBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2 rounded-lg transition-colors" href="#">Enviar un mensaje</a>
+                    </div>
+                </div>
+            </section>
 
-                    <div class="pb-field">
-                      <label for="envio_min_amount">Desde X monto</label>
-                      <input id="envio_min_amount" type="number" min="0" name="envio_min_amount" value="0" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="envio_scope">Aplica a</label>
-                      <select id="envio_scope" name="envio_scope">
-                        <option value="all">Todo el carrito</option>
-                        <option value="product">Producto</option>
-                        <option value="category">Categoría</option>
-                      </select>
-                    </div>
-
-                    <div class="pb-field" id="envio_product_wrap">
-                      <label for="envio_product_id">Producto</label>
-                      <select id="envio_product_id" name="envio_product_id"><option value="">Seleccionar</option></select>
-                    </div>
-
-                    <div class="pb-field hidden" id="envio_category_wrap">
-                      <label for="envio_category_id">Categoría</label>
-                      <select id="envio_category_id" name="envio_category_id"><option value="">Seleccionar</option></select>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="envio_text_prefix">Texto inicial</label>
-                      <input id="envio_text_prefix" type="text" name="envio_text_prefix" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="envio_text_suffix">Texto final</label>
-                      <input id="envio_text_suffix" type="text" name="envio_text_suffix" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="envio_text_reached">Texto al alcanzar</label>
-                      <input id="envio_text_reached" type="text" name="envio_text_reached" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="envio_bar_color">Color barra</label>
-                      <input id="envio_bar_color" type="color" name="envio_bar_color" value="#008C99" />
-                    </div>
-                  </div>
+            <section class="pb-view" data-pb-view-panel="faq">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Preguntas Frecuentes</h1>
                 </div>
 
-                <div id="tab-cuotas" class="tab-panel">
-                  <div class="pb-grid">
-                    <div class="pb-field" style="grid-column: 1 / -1;">
-                      <label class="pb-toggle">
-                        <input id="enable_cuotas_rule" type="checkbox" name="enable_cuotas_rule" value="1" />
-                        <span>Activar</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="cuotas_threshold_amount">Desde X monto</label>
-                      <input id="cuotas_threshold_amount" type="number" min="0" name="cuotas_threshold_amount" value="0" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="cuotas_scope">Aplica a</label>
-                      <select id="cuotas_scope" name="cuotas_scope">
-                        <option value="all">Todo el carrito</option>
-                        <option value="product">Producto</option>
-                        <option value="category">Categoría</option>
-                      </select>
-                    </div>
-
-                    <div class="pb-field" id="cuotas_product_wrap">
-                      <label for="cuotas_product_id">Producto</label>
-                      <select id="cuotas_product_id" name="cuotas_product_id"><option value="">Seleccionar</option></select>
-                    </div>
-
-                    <div class="pb-field hidden" id="cuotas_category_wrap">
-                      <label for="cuotas_category_id">Categoría</label>
-                      <select id="cuotas_category_id" name="cuotas_category_id"><option value="">Seleccionar</option></select>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="cuotas_text_prefix">Texto inicial</label>
-                      <input id="cuotas_text_prefix" type="text" name="cuotas_text_prefix" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="cuotas_text_suffix">Texto final</label>
-                      <input id="cuotas_text_suffix" type="text" name="cuotas_text_suffix" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="cuotas_text_reached">Texto al alcanzar</label>
-                      <input id="cuotas_text_reached" type="text" name="cuotas_text_reached" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="cuotas_bar_color">Color barra</label>
-                      <input id="cuotas_bar_color" type="color" name="cuotas_bar_color" value="#FBB03B" />
-                    </div>
-                  </div>
+                <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden divide-y divide-slate-100">
+                    <details class="group p-6">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                            <span>¿Se pueden combinar envío, cuotas y regalo?</span>
+                            <span class="transition group-open:rotate-180">↓</span>
+                        </summary>
+                        <p class="text-slate-600 mt-4 leading-relaxed">Sí. Puedes activar las tres reglas simultáneamente. El widget se encargará de mostrar una barra de progreso separada y elegante para cada beneficio activo, permitiendo al usuario ver todo lo que puede ganar sumando productos.</p>
+                    </details>
+                    <details class="group p-6">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                            <span>¿Cuándo se actualizan las barras?</span>
+                            <span class="transition group-open:rotate-180">↓</span>
+                        </summary>
+                        <p class="text-slate-600 mt-4 leading-relaxed">Se sincronizan en tiempo real. Cada vez que el usuario agregue, elimine o modifique la cantidad de un artículo en el carrito, la barra recalculará los totales instantáneamente y reproducirá las animaciones correspondientes.</p>
+                    </details>
+                    <details class="group p-6">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                            <span>¿Qué significa "Aplica a"?</span>
+                            <span class="transition group-open:rotate-180">↓</span>
+                        </summary>
+                        <p class="text-slate-600 mt-4 leading-relaxed">Te permite restringir la promoción. Por ejemplo, si seleccionas "Aplica a: Categoría Zapatillas", la barra de Envío Gratis solo sumará el dinero gastado en zapatillas. Si el usuario compra remeras, ese dinero no sumará para la meta de envío.</p>
+                    </details>
+                    <details class="group p-6">
+                        <summary class="flex justify-between items-center font-bold cursor-pointer text-slate-800 list-none">
+                            <span>Tips CRO para aumentar el ticket</span>
+                            <span class="transition group-open:rotate-180">↓</span>
+                        </summary>
+                        <p class="text-slate-600 mt-4 leading-relaxed">Recomendamos fijar la meta de "Envío Gratis" entre un 15% y un 25% por encima del Ticket Promedio actual de tu tienda. Utiliza los colores de tu marca y asegúrate de que el texto sea breve (Ej: "Agrega $X más para Envío Gratis").</p>
+                    </details>
                 </div>
+            </section>
 
-                <div id="tab-regalo" class="tab-panel">
-                  <div class="pb-grid">
-                    <div class="pb-field" style="grid-column: 1 / -1;">
-                      <label class="pb-toggle">
-                        <input id="enable_regalo_rule" type="checkbox" name="enable_regalo_rule" value="1" />
-                        <span>Activar</span>
-                      </label>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="regalo_mode">Modo</label>
-                      <select id="regalo_mode" name="regalo_mode">
-                        <option value="combo_products">Combo de productos</option>
-                        <option value="target_rule">Regla por cantidad</option>
-                      </select>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="regalo_min_amount">Monto minimo</label>
-                      <input id="regalo_min_amount" type="number" min="0" name="regalo_min_amount" value="0" />
-                    </div>
-                  </div>
-
-                  <div id="regalo_combo_fields" style="margin-top: 12px;">
-                    <div class="pb-grid">
-                      <div class="pb-field">
-                        <label for="regalo_primary_product_id">Producto 1</label>
-                        <select id="regalo_primary_product_id" name="regalo_primary_product_id"><option value="">Seleccionar</option></select>
-                      </div>
-                      <div class="pb-field">
-                        <label for="regalo_secondary_product_id">Producto 2</label>
-                        <select id="regalo_secondary_product_id" name="regalo_secondary_product_id"><option value="">Seleccionar</option></select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div id="regalo_target_fields" class="hidden" style="margin-top: 12px;">
-                    <div class="pb-grid">
-                      <div class="pb-field">
-                        <label for="regalo_target_type">Condición</label>
-                        <select id="regalo_target_type" name="regalo_target_type">
-                          <option value="same_product_qty">Cantidad de producto</option>
-                          <option value="category_qty">Cantidad en categoría</option>
-                        </select>
-                      </div>
-                      <div class="pb-field">
-                        <label for="regalo_target_qty">Cantidad objetivo</label>
-                        <input id="regalo_target_qty" type="number" min="0" name="regalo_target_qty" value="0" />
-                      </div>
-                      <div class="pb-field" id="regalo_target_product_wrap">
-                        <label for="regalo_target_product_id">Producto objetivo</label>
-                        <select id="regalo_target_product_id" name="regalo_target_product_id"><option value="">Seleccionar</option></select>
-                      </div>
-                      <div class="pb-field hidden" id="regalo_target_category_wrap">
-                        <label for="regalo_target_category_id">Categoría objetivo</label>
-                        <select id="regalo_target_category_id" name="regalo_target_category_id"><option value="">Seleccionar</option></select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="pb-grid" style="margin-top: 12px;">
-                    <div class="pb-field">
-                      <label for="regalo_gift_product_id">Producto regalo</label>
-                      <select id="regalo_gift_product_id" name="regalo_gift_product_id"><option value="">Seleccionar</option></select>
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="regalo_bar_color">Color barra</label>
-                      <input id="regalo_bar_color" type="color" name="regalo_bar_color" value="#77C3A7" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="regalo_text_prefix">Texto inicial</label>
-                      <input id="regalo_text_prefix" type="text" name="regalo_text_prefix" />
-                    </div>
-
-                    <div class="pb-field">
-                      <label for="regalo_text_suffix">Texto final</label>
-                      <input id="regalo_text_suffix" type="text" name="regalo_text_suffix" />
-                    </div>
-
-                    <div class="pb-field" style="grid-column: 1 / -1;">
-                      <label for="regalo_text_reached">Texto al alcanzar</label>
-                      <input id="regalo_text_reached" type="text" name="regalo_text_reached" />
-                    </div>
-                  </div>
-                </div>
-
-                <div class="pb-actions">
-                  <button id="saveBtn" class="pb-primary" type="submit">Guardar configuración</button>
-                </div>
-              </form>
-            </div>
-          </section>
-
-          <section class="pb-view" data-pb-view-panel="billing">
-            <div class="pb-card">
-              <div class="pb-card__head">
-                <div>
-                  <h1>Facturación</h1>
-                  <p class="pb-muted">La facturación se gestiona desde Tiendanube.</p>
-                </div>
-              </div>
-
-              <div class="pb-billing">
-                <div class="pb-billing__row">
-                  <div class="pb-billing__k">Estado</div>
-                  <div class="pb-billing__v" id="billingStatus">...</div>
-                </div>
-                <div class="pb-billing__row hidden" id="billingUntilWrap">
-                  <div class="pb-billing__k">Gratis hasta</div>
-                  <div class="pb-billing__v" id="billingUntil">...</div>
-                </div>
-                <div class="pb-billing__row hidden" id="billingCodeWrap">
-                  <div class="pb-billing__k">Cupón</div>
-                  <div class="pb-billing__v"><code id="billingCode">...</code></div>
-                </div>
-              </div>
-
-              <div class="pb-divider"></div>
-
-              <div class="pb-coupon">
-                <div class="pb-field">
-                  <label for="couponCode">Cupón</label>
-                  <input id="couponCode" type="text" autocomplete="off" />
-                </div>
-                <button type="button" class="pb-primary" id="couponRedeemBtn">Aplicar cupón</button>
-              </div>
-            </div>
-          </section>
-
-          <section class="pb-view" data-pb-view-panel="contact">
-            <div class="pb-card">
-              <div class="pb-card__head">
-                <div>
-                  <h1>Contacto</h1>
-                  <p class="pb-muted">Soporte y optimización CRO para tu tienda.</p>
-                </div>
-              </div>
-
-              <div class="pb-contact">
-                <a id="supportEmailBtn" class="pb-linkbtn" href="#">Enviar email</a>
-                <button type="button" class="pb-linkbtn" data-pb-jump="faq">Ver FAQ</button>
-              </div>
-
-              <p class="pb-muted" style="margin-top: 12px;"><strong>FRANFER Soluciones</strong></p>
-            </div>
-          </section>
-
-          <section class="pb-view" data-pb-view-panel="faq">
-            <div class="pb-card">
-              <div class="pb-card__head">
-                <div>
-                  <h1>Preguntas frecuentes</h1>
-                  <p class="pb-muted">Guía rápida para operar la app y mejorar rendimiento.</p>
-                </div>
-              </div>
-
-              <div class="pb-faq">
-                <details>
-                  <summary>¿Se pueden combinar envío, cuotas y regalo?</summary>
-                  <p>Sí. Puedes activar las tres reglas y el carrito mostrará una barra por cada beneficio activo.</p>
-                </details>
-                <details>
-                  <summary>¿Cuándo se actualizan las barras?</summary>
-                  <p>Se actualizan automáticamente con cada cambio en el carrito (agregar, quitar o cambiar cantidades).</p>
-                </details>
-                <details>
-                  <summary>¿Qué significa &quot;Aplica a&quot;?</summary>
-                  <p>Define qué subtotal se usa para calcular el progreso: todo el carrito, un producto o una categoría.</p>
-                </details>
-                <details>
-                  <summary>Tips CRO para aumentar el ticket promedio</summary>
-                  <p>Combina envío gratis con cuotas, usa metas alcanzables y textos cortos y claros.</p>
-                </details>
-              </div>
-            </div>
-          </section>
         </main>
-      </div>
-
-      <footer class="pb-footer">
-        <div><strong>FRANFER Soluciones</strong></div>
-        <div>ProgressBar CRO</div>
-      </footer>
     </div>
 
     <div id="pbToast" class="pb-toast" role="status" aria-live="polite"></div>
@@ -478,5 +450,5 @@
     </script>
     <script src="https://unpkg.com/@tiendanube/nexo@1.3.0/dist/index.js" crossorigin="anonymous"></script>
     <script src="/static/admin/admin.js"></script>
-  </body>
+</body>
 </html>

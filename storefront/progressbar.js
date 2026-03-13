@@ -1638,40 +1638,64 @@
     }
 
     function ensureListNode(wrapper) {
-      if (!wrapper) return null;
-      let list = wrapper.querySelector ? wrapper.querySelector('[data-pb-list="1"]') : null;
-      if (list) return list;
-      // Older versions might have single-bar markup. Repair to multi list.
-      try {
-        wrapper.innerHTML = '<div class="tn-progressbar__list" data-pb-list="1"></div>';
-      } catch (_) {}
-      list = wrapper.querySelector ? wrapper.querySelector('[data-pb-list="1"]') : null;
-      return list || null;
+    if (!wrapper) return null;
+    let list = wrapper.querySelector('[data-pb-list="1"]');
+    if (!list) {
+      wrapper.innerHTML = '<div class="tn-progressbar__main-view" data-pb-list="1"></div>';
+      list = wrapper.querySelector('[data-pb-list="1"]');
+    }
+    return list;
+  }
+
+  // Sustitución del motor de renderizado para BARRA ÚNICA MULTI-NIVEL
+  function renderUiResults(wrapper, results) {
+    const list = ensureListNode(wrapper);
+    if (!list) return false;
+
+    const normalized = normalizeUiResults(results);
+    if (!normalized.length) return false;
+
+    // Calculamos el progreso visual basado en la meta más alta actual
+    const currentProgress = Math.max(...normalized.map(function(r) { return r.pct; }));
+    const mainResult = normalized.find(function(r) { return r.pct < 100; }) || normalized[normalized.length - 1];
+    const motionOk = motionEnabled(wrapper);
+
+    // Renderizado de estructura única (Single Bar Layout)
+    list.innerHTML = [
+      '<div class="tn-progressbar__text js-pb-text">', mainResult.message, '</div>',
+      '<div class="tn-progressbar__track">',
+        '<div class="tn-progressbar__fill js-pb-fill" style="width: ', currentProgress, '%;"></div>',
+        '<div class="tn-milestones-layer">',
+          normalized.map(function(r) {
+            const isReached = r.pct >= 99.9;
+            return [
+              '<div class="tn-milestone ', (isReached ? 'is-reached' : ''), '" style="left: ', r.pct, '%">',
+                '<div class="tn-milestone-dot">', (isReached ? '✓' : ''), '</div>',
+                '<span class="tn-milestone-label">', (r.key === 'envio' ? 'Envío' : r.key === 'cuotas' ? 'Cuotas' : 'Regalo'), '</span>',
+              '</div>'
+            ].join('');
+          }).join(''),
+        '</div>',
+      '</div>'
+    ].join('');
+
+    // Actualizamos el estado interno para que los Observers y Pulses sigan funcionando
+    const nextByKey = {};
+    for (let i = 0; i < normalized.length; i++) {
+      nextByKey[String(normalized[i].key)] = normalized[i];
+    }
+    state.lastRenderedByKey = nextByKey;
+    state.lastRendered = mainResult;
+
+    // Disparar animaciones de feedback visual
+    const fill = list.querySelector('.js-pb-fill');
+    if (fill && motionOk && currentProgress > 0) {
+      if (mainResult.color) fill.style.backgroundColor = mainResult.color;
+      bumpAnimClass(fill, 'pb-bounce', 560);
     }
 
-    function ensureItemNode(list, key) {
-      if (!list || !key) return null;
-      const k = String(key);
-      let item = list.querySelector ? list.querySelector('[data-pb-key="' + k + '"]') : null;
-      if (item) return item;
-
-      try {
-        item = doc.createElement('div');
-        item.className = 'tn-progressbar__item';
-        item.setAttribute('data-pb-key', k);
-        item.innerHTML = [
-          '<div class="tn-progressbar__text js-pb-text">&nbsp;</div>',
-          '<div class="tn-progressbar__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">',
-          '  <div class="tn-progressbar__fill js-pb-fill"></div>',
-          '</div>',
-        ].join('');
-        list.appendChild(item);
-      } catch (_) {
-        return null;
-      }
-
-      return item;
-    }
+    return true;
+  }
 
     function motionEnabled(wrapper) {
       if (state.reduceMotion) return false;
